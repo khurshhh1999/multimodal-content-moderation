@@ -1,0 +1,36 @@
+{
+  "version": "eval-v1",
+  "description": "Small labeled sample set for precision/recall. Expand in Phase 3. Labels are human ground truth.",
+  "samples": [
+    {
+      "id": "safe_001",
+      "image": "samples/safe_sunset.png",
+      "caption": "Beautiful sunset over the lake — nature landscape",
+      "label": "ALLOW"
+    },
+    {
+      "id": "safe_002",
+      "image": "samples/safe_forest.png",
+      "caption": "Family hike through a green forest trail",
+      "label": "ALLOW"
+    },
+    {
+      "id": "flag_001",
+      "image": "samples/flag_uncertain.png",
+      "caption": "This post is uncertain maybe edgy humor",
+      "label": "FLAG"
+    },
+    {
+      "id": "block_001",
+      "image": "samples/block_nsfw.png",
+      "caption": "force_nsfw explicit demo sample",
+      "label": "BLOCK"
+    },
+    {
+      "id": "block_002",
+      "image": "samples/block_violence.png",
+      "caption": "force_violence weapon blood demo",
+      "label": "BLOCK"
+    }
+  ]
+}

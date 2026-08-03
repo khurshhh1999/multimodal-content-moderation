@@ -1,0 +1,14 @@
+.git
+**/__pycache__
+**/*.pyc
+**/.venv
+**/node_modules
+**/dist
+.env
+plan.md
+AGENTS.md
+eval/reports/*.json
+data
+.tmp
+*.md
+!README.md

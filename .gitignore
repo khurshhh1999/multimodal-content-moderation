@@ -1,0 +1,68 @@
+# Local agent / planning (never commit)
+plan.md
+AGENTS.md
+agents.md
+PLAN.md
+
+# Secrets & env
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+credentials.json
+service-account*.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg
+
+# Node / frontend
+node_modules/
+apps/dashboard/dist/
+apps/dashboard/.vite/
+*.tsbuildinfo
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Local runtime artifacts
+data/
+.tmp/
+tmp/
+uploads/
+*.sqlite
+.logs/
+logs/
+docker-data/
+
+# Eval outputs (keep labeled_set; ignore run artifacts)
+eval/results/
+eval/reports/*.json
+!eval/reports/.gitkeep
+
+# Terraform / cloud state
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
