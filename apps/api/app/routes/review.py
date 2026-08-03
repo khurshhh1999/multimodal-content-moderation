@@ -9,12 +9,16 @@ from fastapi import APIRouter, HTTPException, Query
 
 from ..config import get_settings
 from ..db import connection
+from ..redis_client import (
+    CLAIM_TTL_SECONDS,
+    acquire_review_claim,
+    get_review_claim_owner,
+    release_review_claim,
+)
 from ..schemas import ClaimRequest, DecisionOut, ResolveRequest, ReviewItemOut
 from ..storage import public_url
 
 router = APIRouter(prefix="/v1", tags=["review"])
-
-CLAIM_TTL_MINUTES = 15
 
 
 def _row_to_review(row: Any, settings) -> ReviewItemOut:
@@ -36,6 +40,7 @@ def _row_to_review(row: Any, settings) -> ReviewItemOut:
         priority=row["priority"],
         claimed_by=row["claimed_by"],
         claimed_at=row["claimed_at"],
+        claim_expires_at=row["claim_expires_at"],
         created_at=row["created_at"],
         decision=row["decision"],
         confidence=row["confidence"],
@@ -90,7 +95,15 @@ async def list_reviews(
 async def claim_review(review_id: UUID, body: ClaimRequest) -> ReviewItemOut:
     settings = get_settings()
     now = datetime.now(timezone.utc)
-    expires = now + timedelta(minutes=CLAIM_TTL_MINUTES)
+    expires = now + timedelta(seconds=CLAIM_TTL_SECONDS)
+
+    ok, owner = await acquire_review_claim(str(review_id), body.reviewer)
+    if not ok:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Review claimed by another reviewer ({owner})",
+        )
+
     async with connection() as conn:
         row = await conn.fetchrow(
             """
@@ -102,7 +115,9 @@ async def claim_review(review_id: UUID, body: ClaimRequest) -> ReviewItemOut:
             WHERE id = $1
               AND (
                 status = 'pending'
-                OR (status = 'claimed' AND claim_expires_at < $3)
+                OR (status = 'claimed' AND (
+                      claim_expires_at IS NULL OR claim_expires_at < $3
+                    ))
                 OR (status = 'claimed' AND claimed_by = $2)
               )
             RETURNING id
@@ -113,7 +128,21 @@ async def claim_review(review_id: UUID, body: ClaimRequest) -> ReviewItemOut:
             expires,
         )
         if not row:
-            raise HTTPException(status_code=409, detail="Review not claimable")
+            # DB state disagrees — release Redis lock so others can retry
+            await release_review_claim(str(review_id), body.reviewer)
+            existing = await conn.fetchrow(
+                "SELECT status, claimed_by, claim_expires_at FROM review_queue WHERE id = $1",
+                review_id,
+            )
+            if not existing:
+                raise HTTPException(status_code=404, detail="Review not found")
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Review not claimable (status={existing['status']}, "
+                    f"claimed_by={existing['claimed_by']})"
+                ),
+            )
 
         full = await conn.fetchrow(
             """
@@ -129,10 +158,11 @@ async def claim_review(review_id: UUID, body: ClaimRequest) -> ReviewItemOut:
         await conn.execute(
             """
             INSERT INTO audit_log (entity_type, entity_id, action, actor, detail)
-            VALUES ('review', $1, 'claimed', $2, '{}'::jsonb)
+            VALUES ('review', $1, 'claimed', $2, $3::jsonb)
             """,
             review_id,
             body.reviewer,
+            json.dumps({"claim_ttl_seconds": CLAIM_TTL_SECONDS}),
         )
     return _row_to_review(full, settings)
 
@@ -142,8 +172,42 @@ async def resolve_review(review_id: UUID, body: ResolveRequest) -> ReviewItemOut
     settings = get_settings()
     now = datetime.now(timezone.utc)
     status = "approved" if body.reviewer_decision == "ALLOW" else "rejected"
+    notes = (body.notes or "").strip()
+
+    # Redis lock must still belong to this reviewer (TTL expiry = conflict)
+    lock_owner = await get_review_claim_owner(str(review_id))
+    if lock_owner is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Claim lock expired — re-claim before resolving",
+        )
+    if lock_owner != body.reviewer:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Review claimed by another reviewer ({lock_owner})",
+        )
 
     async with connection() as conn:
+        model = await conn.fetchrow(
+            """
+            SELECT d.decision
+            FROM review_queue rq
+            JOIN decisions d ON d.id = rq.decision_id
+            WHERE rq.id = $1
+            """,
+            review_id,
+        )
+        if not model:
+            raise HTTPException(status_code=404, detail="Review not found")
+
+        model_decision = model["decision"]
+        is_override = body.reviewer_decision != model_decision
+        if is_override and len(notes) < 3:
+            raise HTTPException(
+                status_code=400,
+                detail="notes required when overriding the model decision",
+            )
+
         row = await conn.fetchrow(
             """
             UPDATE review_queue
@@ -160,7 +224,7 @@ async def resolve_review(review_id: UUID, body: ResolveRequest) -> ReviewItemOut
             review_id,
             status,
             body.reviewer_decision,
-            body.notes,
+            notes,
             body.reviewer,
             now,
         )
@@ -180,7 +244,9 @@ async def resolve_review(review_id: UUID, body: ResolveRequest) -> ReviewItemOut
             json.dumps(
                 {
                     "reviewer_decision": body.reviewer_decision,
-                    "notes": body.notes,
+                    "model_decision": model_decision,
+                    "override": is_override,
+                    "notes": notes,
                     "status": status,
                 }
             ),
@@ -197,6 +263,8 @@ async def resolve_review(review_id: UUID, body: ResolveRequest) -> ReviewItemOut
             """,
             review_id,
         )
+
+    await release_review_claim(str(review_id), body.reviewer)
     return _row_to_review(full, settings)
 
 

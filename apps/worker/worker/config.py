@@ -29,6 +29,13 @@ class Settings(BaseSettings):
 
     policy_version: str = "policy-v1"
     pipeline_version: str = "pipeline-v1"
+    # Threshold bands — bump POLICY_VERSION when these change
+    auto_allow: float = 0.85
+    auto_block: float = 0.90
+    nsfw_block: float = 0.85
+    nsfw_flag: float = 0.45
+    violence_block: float = 0.80
+    violence_flag: float = 0.40
     max_upload_bytes: int = 10 * 1024 * 1024
     poll_wait_seconds: int = 10
     visibility_timeout: int = 60

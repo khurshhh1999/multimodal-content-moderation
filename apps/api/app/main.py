@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import get_settings
 from .db import close_pool, init_pool
 from .redis_client import close_redis, init_redis
-from .routes import ingest, metrics, review
+from .routes import audit, ingest, metrics, review
 
 
 @asynccontextmanager
@@ -40,6 +40,7 @@ app.add_middleware(
 app.include_router(ingest.router)
 app.include_router(review.router)
 app.include_router(metrics.router)
+app.include_router(audit.router)
 
 
 @app.get("/health")

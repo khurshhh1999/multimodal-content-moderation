@@ -44,6 +44,7 @@ class ReviewItemOut(BaseModel):
     priority: int
     claimed_by: str | None
     claimed_at: datetime | None
+    claim_expires_at: datetime | None = None
     created_at: datetime
     decision: str
     confidence: float
@@ -63,6 +64,16 @@ class ResolveRequest(BaseModel):
     reviewer: str = Field(min_length=1, max_length=128)
     reviewer_decision: str = Field(pattern="^(ALLOW|BLOCK)$")
     notes: str = Field(default="", max_length=4000)
+
+
+class AuditEventOut(BaseModel):
+    id: UUID
+    entity_type: str
+    entity_id: UUID
+    action: str
+    actor: str
+    detail: dict[str, Any]
+    created_at: datetime
 
 
 class MetricsSummary(BaseModel):

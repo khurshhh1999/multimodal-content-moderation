@@ -49,7 +49,7 @@ def validate(image_bytes: bytes, content_type: str, settings: Settings) -> list[
         raise ValidationError("empty_object")
     if len(image_bytes) > settings.max_upload_bytes:
         raise ValidationError("object_too_large")
-    # Hook point for ClamAV / malware scan in Phase 4
+    # Hook point for ClamAV / malware scan
     reasons.append("validation_ok")
     return reasons
 
@@ -92,7 +92,15 @@ async def process_job(
     vision = get_vision_adapter(settings).analyze(image_bytes, caption)
     suggested, llm = get_llm_adapter(settings).classify(caption=caption, vision=vision)
 
-    thresholds = ThresholdConfig(policy_version=settings.policy_version)
+    thresholds = ThresholdConfig.from_values(
+        policy_version=settings.policy_version,
+        auto_allow=settings.auto_allow,
+        auto_block=settings.auto_block,
+        nsfw_block=settings.nsfw_block,
+        nsfw_flag=settings.nsfw_flag,
+        violence_block=settings.violence_block,
+        violence_flag=settings.violence_flag,
+    )
     final, needs_review, route_reasons = route_decision(
         suggested=suggested,
         confidence=llm.score,

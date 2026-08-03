@@ -195,7 +195,7 @@ export default function App() {
 
                 <textarea
                   className="notes"
-                  placeholder="Reviewer notes (optional for ALLOW, recommended for BLOCK)"
+                  placeholder="Notes required when overriding the model decision (FLAG → ALLOW/BLOCK)"
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
                 />
