@@ -11,6 +11,36 @@ from ..config import Settings
 
 logger = logging.getLogger(__name__)
 
+# GCP Vision Likelihood enum → score (UNKNOWN/VERY_UNLIKELY…VERY_LIKELY)
+_GCP_LIKELIHOOD_SCORE = {
+    0: 0.0,  # UNKNOWN
+    1: 0.05,  # VERY_UNLIKELY
+    2: 0.2,  # UNLIKELY
+    3: 0.45,  # POSSIBLE
+    4: 0.75,  # LIKELY
+    5: 0.95,  # VERY_LIKELY
+}
+
+
+def gcp_likelihood_score(value: object) -> float:
+    """Map a GCP Likelihood enum/int/name to a 0–1 score."""
+    if value is None:
+        return 0.0
+    if hasattr(value, "value"):
+        return _GCP_LIKELIHOOD_SCORE.get(int(value.value), 0.0)
+    if isinstance(value, int):
+        return _GCP_LIKELIHOOD_SCORE.get(value, 0.0)
+    name = str(value).upper().split(".")[-1]
+    mapping = {
+        "UNKNOWN": 0.0,
+        "VERY_UNLIKELY": 0.05,
+        "UNLIKELY": 0.2,
+        "POSSIBLE": 0.45,
+        "LIKELY": 0.75,
+        "VERY_LIKELY": 0.95,
+    }
+    return mapping.get(name, 0.0)
+
 
 class VisionAdapter(Protocol):
     def analyze(self, image_bytes: bytes, caption: str) -> VisionSignals: ...
@@ -107,7 +137,7 @@ class LocalHeuristicVision:
 
 
 class AwsRekognitionVision:
-    """AWS Rekognition adapter (Phase 2). Falls back to local if boto call fails."""
+    """AWS Rekognition adapter. Falls back to local if boto call fails."""
 
     model_version = "rekognition-moderation-v1"
 
@@ -159,7 +189,11 @@ class AwsRekognitionVision:
 
 
 class GcpVisionAdapter:
-    """GCP Vision API adapter (Phase 3). Falls back to local without credentials."""
+    """GCP Vision API adapter (Safe Search + labels + OCR).
+
+    Uses Application Default Credentials / GOOGLE_APPLICATION_CREDENTIALS.
+    Falls back to the local heuristic when the SDK or credentials are unavailable.
+    """
 
     model_version = "gcp-vision-safe-search-v1"
 
@@ -171,44 +205,82 @@ class GcpVisionAdapter:
         try:
             from google.cloud import vision  # type: ignore
 
-            client = vision.ImageAnnotatorClient()
+            client_kwargs: dict = {}
+            if self.settings.google_application_credentials:
+                client_kwargs["credentials"] = _load_gcp_credentials(
+                    self.settings.google_application_credentials
+                )
+            client = vision.ImageAnnotatorClient(**client_kwargs)
             image = vision.Image(content=image_bytes)
-            safe = client.safe_search_detection(image=image).safe_search_annotation
-            texts = client.text_detection(image=image).text_annotations
+
+            # Batch features in one round-trip when possible
+            features = [
+                vision.Feature(type_=vision.Feature.Type.SAFE_SEARCH_DETECTION),
+                vision.Feature(type_=vision.Feature.Type.LABEL_DETECTION, max_results=10),
+                vision.Feature(type_=vision.Feature.Type.TEXT_DETECTION),
+            ]
+            request = vision.AnnotateImageRequest(image=image, features=features)
+            response = client.annotate_image(request=request)
+            if response.error.message:
+                raise RuntimeError(response.error.message)
+
+            safe = response.safe_search_annotation
+            nsfw = max(
+                gcp_likelihood_score(safe.adult),
+                gcp_likelihood_score(safe.racy),
+            )
+            violence = gcp_likelihood_score(safe.violence)
+
+            label_names = [lab.description for lab in (response.label_annotations or [])]
+            likelihood_labels = [
+                f"adult:{_likeli_name(safe.adult)}",
+                f"racy:{_likeli_name(safe.racy)}",
+                f"violence:{_likeli_name(safe.violence)}",
+                f"spoof:{_likeli_name(safe.spoof)}",
+                f"medical:{_likeli_name(safe.medical)}",
+            ]
+            labels = likelihood_labels + label_names
+
+            texts = response.text_annotations or []
             ocr = texts[0].description if texts else ""
 
-            def likeli(v) -> float:
-                mapping = {
-                    0: 0.0,
-                    1: 0.1,
-                    2: 0.3,
-                    3: 0.6,
-                    4: 0.85,
-                    5: 0.98,
-                }
-                return mapping.get(int(v), 0.0)
-
-            nsfw = max(likeli(safe.adult), likeli(safe.racy))
-            violence = likeli(safe.violence)
-            labels = [
-                f"adult:{safe.adult.name}",
-                f"racy:{safe.racy.name}",
-                f"violence:{safe.violence.name}",
-            ]
             return VisionSignals(
-                labels=labels,
+                labels=labels or ["gcp_clean"],
                 nsfw_score=round(nsfw, 4),
                 violence_score=round(violence, 4),
                 ocr_text=(ocr or "")[:2000],
                 provider="gcp",
                 model_version=self.model_version,
-                raw={},
+                raw={
+                    "safe_search": {
+                        "adult": _likeli_name(safe.adult),
+                        "racy": _likeli_name(safe.racy),
+                        "violence": _likeli_name(safe.violence),
+                        "spoof": _likeli_name(safe.spoof),
+                        "medical": _likeli_name(safe.medical),
+                    },
+                    "label_annotations": label_names,
+                },
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("GCP Vision unavailable, using local: %s", exc)
             signals = self._local.analyze(image_bytes, caption)
             signals.raw["gcp_fallback_error"] = str(exc)
             return signals
+
+
+def _likeli_name(value: object) -> str:
+    if value is None:
+        return "UNKNOWN"
+    if hasattr(value, "name"):
+        return str(value.name)
+    return str(value)
+
+
+def _load_gcp_credentials(path: str):
+    from google.oauth2 import service_account  # type: ignore
+
+    return service_account.Credentials.from_service_account_file(path)
 
 
 def get_vision_adapter(settings: Settings) -> VisionAdapter:

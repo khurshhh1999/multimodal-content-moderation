@@ -87,7 +87,6 @@ async def handle_message(pool: asyncpg.Pool, settings, body: dict) -> None:
         except ValidationError as exc:
             await mark_failed(conn, job_id, f"validation: {exc}")
             logger.warning("Validation failed job=%s err=%s", job_id, exc)
-            # Delete message (no retry for bad payload types) — caller deletes
             raise
         except Exception as exc:  # noqa: BLE001
             await mark_failed(conn, job_id, str(exc))
@@ -95,10 +94,14 @@ async def handle_message(pool: asyncpg.Pool, settings, body: dict) -> None:
             raise
 
 
-async def poll_loop(pool: asyncpg.Pool) -> None:
-    settings = get_settings()
+async def poll_sqs(pool: asyncpg.Pool, settings) -> None:
     client = _sqs(settings)
-    logger.info("Worker polling %s provider=%s/%s", settings.sqs_queue_url, settings.vision_provider, settings.llm_provider)
+    logger.info(
+        "Worker polling SQS %s vision=%s llm=%s",
+        settings.sqs_queue_url,
+        settings.vision_provider,
+        settings.llm_provider,
+    )
 
     while not _shutdown.is_set():
         try:
@@ -130,16 +133,94 @@ async def poll_loop(pool: asyncpg.Pool) -> None:
                     ReceiptHandle=receipt,
                 )
             except ValidationError:
-                # Poison for validation — delete so it doesn't loop forever;
-                # DLQ still catches processing failures via receive count.
                 await asyncio.to_thread(
                     client.delete_message,
                     QueueUrl=settings.sqs_queue_url,
                     ReceiptHandle=receipt,
                 )
             except Exception:
-                # Leave message for retry / DLQ via RedrivePolicy
                 logger.error("Leaving message for retry/DLQ")
+
+
+async def poll_pubsub(pool: asyncpg.Pool, settings) -> None:
+    from google.cloud import pubsub_v1  # type: ignore
+
+    subscriber_kwargs: dict = {}
+    if settings.google_application_credentials:
+        from google.oauth2 import service_account  # type: ignore
+
+        subscriber_kwargs["credentials"] = service_account.Credentials.from_service_account_file(
+            settings.google_application_credentials
+        )
+    subscriber = pubsub_v1.SubscriberClient(**subscriber_kwargs)
+    if not settings.gcp_project:
+        raise RuntimeError("GCP_PROJECT is required when QUEUE_PROVIDER=pubsub")
+    sub_path = subscriber.subscription_path(settings.gcp_project, settings.pubsub_subscription)
+    logger.info(
+        "Worker polling Pub/Sub %s vision=%s llm=%s",
+        sub_path,
+        settings.vision_provider,
+        settings.llm_provider,
+    )
+
+    while not _shutdown.is_set():
+        try:
+            resp = await asyncio.to_thread(
+                subscriber.pull,
+                request={
+                    "subscription": sub_path,
+                    "max_messages": 5,
+                    "return_immediately": False,
+                },
+                timeout=settings.poll_wait_seconds + 5,
+            )
+        except Exception as exc:  # noqa: BLE001
+            # DeadlineExceeded is normal idle behavior for some clients
+            if "DeadlineExceeded" in type(exc).__name__ or "Deadline Exceeded" in str(exc):
+                continue
+            logger.error("Pub/Sub pull error: %s", exc)
+            await asyncio.sleep(2)
+            continue
+
+        received = list(resp.received_messages or [])
+        if not received:
+            continue
+
+        ack_ids: list[str] = []
+        nack_ids: list[str] = []
+        for msg in received:
+            try:
+                body = json.loads(msg.message.data.decode("utf-8"))
+                await handle_message(pool, settings, body)
+                ack_ids.append(msg.ack_id)
+            except ValidationError:
+                ack_ids.append(msg.ack_id)
+            except Exception:
+                nack_ids.append(msg.ack_id)
+                logger.error("Nacking Pub/Sub message for retry")
+
+        if ack_ids:
+            await asyncio.to_thread(
+                subscriber.acknowledge,
+                request={"subscription": sub_path, "ack_ids": ack_ids},
+            )
+        if nack_ids:
+            await asyncio.to_thread(
+                subscriber.modify_ack_deadline,
+                request={
+                    "subscription": sub_path,
+                    "ack_ids": nack_ids,
+                    "ack_deadline_seconds": 0,
+                },
+            )
+
+
+async def poll_loop(pool: asyncpg.Pool) -> None:
+    settings = get_settings()
+    if settings.queue_provider.lower() == "pubsub":
+        await poll_pubsub(pool, settings)
+    else:
+        await poll_sqs(pool, settings)
 
 
 async def main() -> None:

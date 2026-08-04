@@ -9,12 +9,20 @@ class Settings(BaseSettings):
     database_url: str = "postgresql://moderation:moderation@localhost:5432/moderation"
     redis_url: str = "redis://localhost:6379/0"
 
+    storage_provider: str = "s3"  # s3 | gcs
+    queue_provider: str = "sqs"  # sqs | pubsub
+
     s3_endpoint_url: str = "http://localhost:9000"
     s3_public_endpoint_url: str = "http://localhost:9000"
     s3_access_key: str = "minioadmin"
     s3_secret_key: str = "minioadmin"
     s3_bucket: str = "moderation-content"
     s3_region: str = "us-east-1"
+
+    gcs_bucket: str = "moderation-content"
+    gcp_project: str = ""
+    google_application_credentials: str = ""
+    pubsub_topic: str = "moderation-jobs"
 
     sqs_endpoint_url: str = "http://localhost:4566"
     sqs_queue_url: str = "http://localhost:4566/000000000000/moderation-jobs"

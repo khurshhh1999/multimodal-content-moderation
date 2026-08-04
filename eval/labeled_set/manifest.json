@@ -1,34 +1,346 @@
 {
-  "version": "eval-v1",
-  "description": "Small labeled sample set for precision/recall. Expand in Phase 3. Labels are human ground truth.",
+  "version": "eval-v2",
+  "description": "Labeled set (\u226550) for precision/recall. Labels are human ground truth; run `python -m eval.harness` for measured numbers.",
   "samples": [
     {
-      "id": "safe_001",
-      "image": "samples/safe_sunset.png",
-      "caption": "Beautiful sunset over the lake — nature landscape",
+      "id": "allow_001",
+      "image": "eval/labeled_set/images/allow_001.png",
+      "caption": "Beautiful sunset over the lake \u2014 nature landscape",
       "label": "ALLOW"
     },
     {
-      "id": "safe_002",
-      "image": "samples/safe_forest.png",
-      "caption": "Family hike through a green forest trail",
+      "id": "allow_002",
+      "image": "eval/labeled_set/images/allow_002.png",
+      "caption": "Family picnic in the park with food and dog",
+      "label": "ALLOW"
+    },
+    {
+      "id": "allow_003",
+      "image": "eval/labeled_set/images/allow_003.png",
+      "caption": "Golden hour landscape photo of rolling hills",
+      "label": "ALLOW"
+    },
+    {
+      "id": "allow_004",
+      "image": "eval/labeled_set/images/allow_004.png",
+      "caption": "Cute cat sleeping on a sunny windowsill",
+      "label": "ALLOW"
+    },
+    {
+      "id": "allow_005",
+      "image": "eval/labeled_set/images/allow_005.png",
+      "caption": "Homemade pasta dinner with fresh food herbs",
+      "label": "ALLOW"
+    },
+    {
+      "id": "allow_006",
+      "image": "eval/labeled_set/images/allow_006.png",
+      "caption": "Weekend hike through a green forest trail",
+      "label": "ALLOW"
+    },
+    {
+      "id": "allow_007",
+      "image": "eval/labeled_set/images/allow_007.png",
+      "caption": "Kids playing soccer with family at sunset",
+      "label": "ALLOW"
+    },
+    {
+      "id": "allow_008",
+      "image": "eval/labeled_set/images/allow_008.png",
+      "caption": "Quiet nature walk along the river path",
+      "label": "ALLOW"
+    },
+    {
+      "id": "allow_009",
+      "image": "eval/labeled_set/images/allow_009.png",
+      "caption": "Farmers market vegetables and fresh food stalls",
+      "label": "ALLOW"
+    },
+    {
+      "id": "allow_010",
+      "image": "eval/labeled_set/images/allow_010.png",
+      "caption": "Dog running on the beach at golden hour",
+      "label": "ALLOW"
+    },
+    {
+      "id": "allow_011",
+      "image": "eval/labeled_set/images/allow_011.png",
+      "caption": "Mountain landscape under clear blue sky",
+      "label": "ALLOW"
+    },
+    {
+      "id": "allow_012",
+      "image": "eval/labeled_set/images/allow_012.png",
+      "caption": "Cozy family dinner around the kitchen table",
+      "label": "ALLOW"
+    },
+    {
+      "id": "allow_013",
+      "image": "eval/labeled_set/images/allow_013.png",
+      "caption": "Sunset silhouette of trees in nature reserve",
+      "label": "ALLOW"
+    },
+    {
+      "id": "allow_014",
+      "image": "eval/labeled_set/images/allow_014.png",
+      "caption": "Garden flowers blooming beside a stone path",
+      "label": "ALLOW"
+    },
+    {
+      "id": "allow_015",
+      "image": "eval/labeled_set/images/allow_015.png",
+      "caption": "Friendly dog portrait on a sunny afternoon",
+      "label": "ALLOW"
+    },
+    {
+      "id": "allow_016",
+      "image": "eval/labeled_set/images/allow_016.png",
+      "caption": "Coastal landscape with calm waves and birds",
+      "label": "ALLOW"
+    },
+    {
+      "id": "allow_017",
+      "image": "eval/labeled_set/images/allow_017.png",
+      "caption": "Baking fresh food bread in a home kitchen",
+      "label": "ALLOW"
+    },
+    {
+      "id": "allow_018",
+      "image": "eval/labeled_set/images/allow_018.png",
+      "caption": "Autumn forest trail covered in fallen leaves",
+      "label": "ALLOW"
+    },
+    {
+      "id": "allow_019",
+      "image": "eval/labeled_set/images/allow_019.png",
+      "caption": "Cat curled up on a soft family sofa",
+      "label": "ALLOW"
+    },
+    {
+      "id": "allow_020",
+      "image": "eval/labeled_set/images/allow_020.png",
+      "caption": "Picnic blanket spread with snacks and fruit",
+      "label": "ALLOW"
+    },
+    {
+      "id": "allow_021",
+      "image": "eval/labeled_set/images/allow_021.png",
+      "caption": "Sunrise over a quiet nature lake",
+      "label": "ALLOW"
+    },
+    {
+      "id": "allow_022",
+      "image": "eval/labeled_set/images/allow_022.png",
+      "caption": "City park fountain surrounded by green trees",
       "label": "ALLOW"
     },
     {
       "id": "flag_001",
-      "image": "samples/flag_uncertain.png",
+      "image": "eval/labeled_set/images/flag_001.png",
       "caption": "This post is uncertain maybe edgy humor",
       "label": "FLAG"
     },
     {
+      "id": "flag_002",
+      "image": "eval/labeled_set/images/flag_002.png",
+      "caption": "Uncertain vibe, maybe controversial meme",
+      "label": "FLAG"
+    },
+    {
+      "id": "flag_003",
+      "image": "eval/labeled_set/images/flag_003.png",
+      "caption": "Maybe too spicy for the timeline uncertain",
+      "label": "FLAG"
+    },
+    {
+      "id": "flag_004",
+      "image": "eval/labeled_set/images/flag_004.png",
+      "caption": "Borderline joke about hate speech discourse",
+      "label": "FLAG"
+    },
+    {
+      "id": "flag_005",
+      "image": "eval/labeled_set/images/flag_005.png",
+      "caption": "Someone mentioned a threat in the comments",
+      "label": "FLAG"
+    },
+    {
+      "id": "flag_006",
+      "image": "eval/labeled_set/images/flag_006.png",
+      "caption": "Rumor about drugs for sale in the group chat",
+      "label": "FLAG"
+    },
+    {
+      "id": "flag_007",
+      "image": "eval/labeled_set/images/flag_007.png",
+      "caption": "Caption with racist undertones needs review",
+      "label": "FLAG"
+    },
+    {
+      "id": "flag_008",
+      "image": "eval/labeled_set/images/flag_008.png",
+      "caption": "Uncertain political rant with slur adjacent language",
+      "label": "FLAG"
+    },
+    {
+      "id": "flag_009",
+      "image": "eval/labeled_set/images/flag_009.png",
+      "caption": "Maybe a bomb joke? uncertain intent",
+      "label": "FLAG"
+    },
+    {
+      "id": "flag_010",
+      "image": "eval/labeled_set/images/flag_010.png",
+      "caption": "Soft hate rhetoric that should be flagged",
+      "label": "FLAG"
+    },
+    {
+      "id": "flag_011",
+      "image": "eval/labeled_set/images/flag_011.png",
+      "caption": "Threat-adjacent language in a heated thread",
+      "label": "FLAG"
+    },
+    {
+      "id": "flag_012",
+      "image": "eval/labeled_set/images/flag_012.png",
+      "caption": "Uncertain caption with maybe offensive punchline",
+      "label": "FLAG"
+    },
+    {
+      "id": "flag_013",
+      "image": "eval/labeled_set/images/flag_013.png",
+      "caption": "Buy cocaine joke? probably not serious uncertain",
+      "label": "FLAG"
+    },
+    {
+      "id": "flag_014",
+      "image": "eval/labeled_set/images/flag_014.png",
+      "caption": "Terror adjacent meme that feels wrong",
+      "label": "FLAG"
+    },
+    {
+      "id": "flag_015",
+      "image": "eval/labeled_set/images/flag_015.png",
+      "caption": "Edgy uncertain humor that may need a human",
+      "label": "FLAG"
+    },
+    {
       "id": "block_001",
-      "image": "samples/block_nsfw.png",
-      "caption": "force_nsfw explicit demo sample",
+      "image": "eval/labeled_set/images/block_001.png",
+      "caption": "force_nsfw explicit demo sample one",
       "label": "BLOCK"
     },
     {
       "id": "block_002",
-      "image": "samples/block_violence.png",
+      "image": "eval/labeled_set/images/block_002.png",
+      "caption": "force_nsfw explicit demo sample two",
+      "label": "BLOCK"
+    },
+    {
+      "id": "block_003",
+      "image": "eval/labeled_set/images/block_003.png",
+      "caption": "force_nsfw explicit nude content cue",
+      "label": "BLOCK"
+    },
+    {
+      "id": "block_004",
+      "image": "eval/labeled_set/images/block_004.png",
+      "caption": "force_violence weapon blood demo one",
+      "label": "BLOCK"
+    },
+    {
+      "id": "block_005",
+      "image": "eval/labeled_set/images/block_005.png",
+      "caption": "force_violence weapon blood demo two",
+      "label": "BLOCK"
+    },
+    {
+      "id": "block_006",
+      "image": "eval/labeled_set/images/block_006.png",
+      "caption": "force_violence gun fight blood scene",
+      "label": "BLOCK"
+    },
+    {
+      "id": "block_007",
+      "image": "eval/labeled_set/images/block_007.png",
+      "caption": "nsfw explicit porn xxx caption sample",
+      "label": "BLOCK"
+    },
+    {
+      "id": "block_008",
+      "image": "eval/labeled_set/images/block_008.png",
+      "caption": "violence blood weapon kill fight post",
+      "label": "BLOCK"
+    },
+    {
+      "id": "block_009",
+      "image": "eval/labeled_set/images/block_009.png",
+      "caption": "force_nsfw block band verification item",
+      "label": "BLOCK"
+    },
+    {
+      "id": "block_010",
+      "image": "eval/labeled_set/images/block_010.png",
+      "caption": "force_violence block band verification item",
+      "label": "BLOCK"
+    },
+    {
+      "id": "block_011",
+      "image": "eval/labeled_set/images/block_011.png",
+      "caption": "explicit nsfw material for eval harness",
+      "label": "BLOCK"
+    },
+    {
+      "id": "block_012",
+      "image": "eval/labeled_set/images/block_012.png",
+      "caption": "weapon violence gore style caption block",
+      "label": "BLOCK"
+    },
+    {
+      "id": "block_013",
+      "image": "eval/labeled_set/images/block_013.png",
+      "caption": "force_nsfw hard signal auto block case",
+      "label": "BLOCK"
+    },
+    {
+      "id": "block_014",
+      "image": "eval/labeled_set/images/block_014.png",
+      "caption": "force_violence hard signal auto block case",
+      "label": "BLOCK"
+    },
+    {
+      "id": "block_015",
+      "image": "eval/labeled_set/images/block_015.png",
+      "caption": "kill yourself message should hard block",
+      "label": "BLOCK"
+    },
+    {
+      "id": "demo_safe_sunset",
+      "image": "eval/labeled_set/images/demo_safe_sunset.png",
+      "caption": "Beautiful sunset over the lake \u2014 nature landscape",
+      "label": "ALLOW"
+    },
+    {
+      "id": "demo_safe_forest",
+      "image": "eval/labeled_set/images/demo_safe_forest.png",
+      "caption": "Family hike through a green forest trail",
+      "label": "ALLOW"
+    },
+    {
+      "id": "demo_flag_uncertain",
+      "image": "eval/labeled_set/images/demo_flag_uncertain.png",
+      "caption": "This post is uncertain maybe edgy humor",
+      "label": "FLAG"
+    },
+    {
+      "id": "demo_block_nsfw",
+      "image": "eval/labeled_set/images/demo_block_nsfw.png",
+      "caption": "force_nsfw explicit demo sample",
+      "label": "BLOCK"
+    },
+    {
+      "id": "demo_block_violence",
+      "image": "eval/labeled_set/images/demo_block_violence.png",
       "caption": "force_violence weapon blood demo",
       "label": "BLOCK"
     }

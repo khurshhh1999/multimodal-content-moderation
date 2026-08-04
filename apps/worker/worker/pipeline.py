@@ -6,12 +6,11 @@ import time
 from uuid import UUID
 
 import asyncpg
-import boto3
-from botocore.client import Config
 from moderation_shared import DecisionEnvelope, ThresholdConfig, route_decision
 
 from .adapters import get_llm_adapter, get_vision_adapter
 from .config import Settings
+from .object_store import fetch_object
 
 logger = logging.getLogger(__name__)
 
@@ -20,25 +19,6 @@ ALLOWED_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 
 class ValidationError(Exception):
     pass
-
-
-def _s3(settings: Settings):
-    return boto3.client(
-        "s3",
-        endpoint_url=settings.s3_endpoint_url,
-        aws_access_key_id=settings.s3_access_key,
-        aws_secret_access_key=settings.s3_secret_key,
-        region_name=settings.s3_region,
-        config=Config(signature_version="s3v4"),
-    )
-
-
-def fetch_object(settings: Settings, object_key: str) -> tuple[bytes, str]:
-    client = _s3(settings)
-    resp = client.get_object(Bucket=settings.s3_bucket, Key=object_key)
-    body = resp["Body"].read()
-    content_type = resp.get("ContentType") or "application/octet-stream"
-    return body, content_type
 
 
 def validate(image_bytes: bytes, content_type: str, settings: Settings) -> list[str]:

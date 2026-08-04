@@ -9,6 +9,7 @@ export type ReviewItem = {
   priority: number;
   claimed_by: string | null;
   claimed_at: string | null;
+  claim_expires_at?: string | null;
   created_at: string;
   decision: "ALLOW" | "FLAG" | "BLOCK";
   confidence: number;
@@ -47,6 +48,16 @@ export type MetricsSummary = {
   decisions_last_minute: number;
 };
 
+export type AuditEvent = {
+  id: string;
+  entity_type: string;
+  entity_id: string;
+  action: string;
+  actor: string;
+  detail: Record<string, unknown>;
+  created_at: string;
+};
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     ...init,
@@ -76,4 +87,12 @@ export const api = {
       body: JSON.stringify({ reviewer, reviewer_decision, notes }),
     }),
   metrics: () => request<MetricsSummary>("/v1/metrics/summary"),
+  audit: (params?: { entity_type?: string; entity_id?: string; actor?: string }) => {
+    const q = new URLSearchParams();
+    if (params?.entity_type) q.set("entity_type", params.entity_type);
+    if (params?.entity_id) q.set("entity_id", params.entity_id);
+    if (params?.actor) q.set("actor", params.actor);
+    const suffix = q.toString() ? `?${q}` : "";
+    return request<AuditEvent[]>(`/v1/audit${suffix}`);
+  },
 };

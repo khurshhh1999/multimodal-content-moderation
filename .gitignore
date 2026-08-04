@@ -56,8 +56,13 @@ uploads/
 logs/
 docker-data/
 
-# Eval outputs (keep labeled_set; ignore run artifacts)
+# Generated demo samples (rebuild via make samples)
+samples/*.png
+!samples/.gitkeep
+
+# Eval outputs (keep labeled_set manifest; ignore generated images + reports)
 eval/results/
+eval/labeled_set/images/
 eval/reports/*.json
 !eval/reports/.gitkeep
 

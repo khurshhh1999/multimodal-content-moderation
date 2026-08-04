@@ -82,6 +82,8 @@ services:
       S3_ACCESS_KEY: minioadmin
       S3_SECRET_KEY: minioadmin
       S3_BUCKET: moderation-content
+      STORAGE_PROVIDER: s3
+      QUEUE_PROVIDER: sqs
       SQS_ENDPOINT_URL: http://localstack:4566
       SQS_QUEUE_URL: http://localstack:4566/000000000000/moderation-jobs
       AWS_ACCESS_KEY_ID: test
@@ -112,6 +114,8 @@ services:
       S3_ACCESS_KEY: minioadmin
       S3_SECRET_KEY: minioadmin
       S3_BUCKET: moderation-content
+      STORAGE_PROVIDER: s3
+      QUEUE_PROVIDER: sqs
       SQS_ENDPOINT_URL: http://localstack:4566
       SQS_QUEUE_URL: http://localstack:4566/000000000000/moderation-jobs
       SQS_DLQ_URL: http://localstack:4566/000000000000/moderation-jobs-dlq

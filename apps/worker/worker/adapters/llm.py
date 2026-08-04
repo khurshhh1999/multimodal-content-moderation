@@ -32,7 +32,7 @@ class LlmAdapter(Protocol):
 
 
 class RulesPolicyClassifier:
-    """Policy-aware rules fusion over caption + OCR + vision labels (Phase 1)."""
+    """Policy-aware rules fusion over caption + OCR + vision labels."""
 
     model_version = "rules-v1"
 
@@ -116,7 +116,7 @@ class RulesPolicyClassifier:
 
 
 class OpenAIPolicyClassifier:
-    """Optional OpenAI policy classifier (Phase 2). Falls back to rules."""
+    """Optional OpenAI policy classifier. Falls back to rules."""
 
     def __init__(self, settings: Settings):
         self.settings = settings

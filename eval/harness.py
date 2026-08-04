@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Offline eval harness against local vision+rules adapters.
 
-Phase 3 will expand the labeled set and report measured precision/recall.
+Expand `eval/labeled_set/` via `scripts/build_labeled_set.py`.
 Do NOT invent résumé metrics — paste output from this script into README.
 """
 
@@ -21,6 +21,12 @@ from worker.adapters.llm import RulesPolicyClassifier  # noqa: E402
 from worker.adapters.vision import LocalHeuristicVision  # noqa: E402
 
 
+def _f1(precision: float, recall: float) -> float:
+    if precision + recall == 0:
+        return 0.0
+    return 2 * precision * recall / (precision + recall)
+
+
 def main() -> None:
     manifest_path = ROOT / "eval" / "labeled_set" / "manifest.json"
     manifest = json.loads(manifest_path.read_text())
@@ -35,7 +41,10 @@ def main() -> None:
     for sample in manifest["samples"]:
         image_path = ROOT / sample["image"]
         if not image_path.exists():
-            print(f"Missing image {image_path}; run scripts/generate_samples.py")
+            print(
+                f"Missing image {image_path}; run: "
+                "python scripts/generate_samples.py && python scripts/build_labeled_set.py"
+            )
             sys.exit(1)
         image_bytes = image_path.read_bytes()
         caption = sample["caption"]
@@ -57,7 +66,6 @@ def main() -> None:
     correct = sum(1 for a, b in zip(y_true, y_pred) if a == b)
     accuracy = correct / len(y_true) if y_true else 0.0
 
-    # Precision for BLOCK+FLAG as "actioned" vs ALLOW — and per-class precision
     per_class = {}
     for label in labels:
         tp = sum(1 for a, b in zip(y_true, y_pred) if a == label and b == label)
@@ -68,11 +76,13 @@ def main() -> None:
         per_class[label] = {
             "precision": round(precision, 4),
             "recall": round(recall, 4),
+            "f1": round(_f1(precision, recall), 4),
             "support": sum(1 for a in y_true if a == label),
         }
 
-    # Macro precision (unweighted)
     macro_p = sum(per_class[l]["precision"] for l in labels) / len(labels)
+    macro_r = sum(per_class[l]["recall"] for l in labels) / len(labels)
+    macro_f1 = sum(per_class[l]["f1"] for l in labels) / len(labels)
     auto_rate = auto / len(y_true) if y_true else 0.0
     # Manual review reduction vs send-everything baseline
     manual_reduction = auto_rate
@@ -81,6 +91,8 @@ def main() -> None:
         "n": len(y_true),
         "accuracy": round(accuracy, 4),
         "macro_precision": round(macro_p, 4),
+        "macro_recall": round(macro_r, 4),
+        "macro_f1": round(macro_f1, 4),
         "per_class": per_class,
         "confusion": {
             "true": dict(Counter(y_true)),
@@ -89,14 +101,23 @@ def main() -> None:
         },
         "auto_resolve_rate": round(auto_rate, 4),
         "manual_review_reduction_vs_send_all": round(manual_reduction, 4),
-        "note": "Small smoke set (n=5). Expand labeled_set before citing résumé metrics.",
+        "note": (
+            f"Labeled set n={len(y_true)}. "
+            "Cite only these harness numbers in README / résumé bullets."
+        ),
     }
 
     out_dir = ROOT / "eval" / "reports"
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / "latest.json"
     out_path.write_text(json.dumps(report, indent=2))
-    print(json.dumps(report, indent=2))
+    # Compact console view (omit full pair list)
+    printable = {k: v for k, v in report.items() if k != "confusion"}
+    printable["confusion"] = {
+        "true": report["confusion"]["true"],
+        "pred": report["confusion"]["pred"],
+    }
+    print(json.dumps(printable, indent=2))
     print(f"\nWrote {out_path}")
 
 

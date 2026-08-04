@@ -1,4 +1,4 @@
--- Multimodal content moderation — Phase 1 schema
+-- Multimodal content moderation schema
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 CREATE TABLE IF NOT EXISTS content_items (

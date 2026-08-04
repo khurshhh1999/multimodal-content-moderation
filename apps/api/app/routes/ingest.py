@@ -82,6 +82,11 @@ async def ingest_content(
     content_id = uuid.uuid4()
     job_id = uuid.uuid4()
     object_key = f"content/{digest[:2]}/{digest}/{content_id}.{_ext(content_type)}"
+    bucket = (
+        settings.gcs_bucket
+        if settings.storage_provider.lower() == "gcs"
+        else settings.s3_bucket
+    )
 
     try:
         put_object(
@@ -105,7 +110,7 @@ async def ingest_content(
                     content_id,
                     digest,
                     object_key,
-                    settings.s3_bucket,
+                    bucket,
                     caption.strip(),
                     content_type,
                     len(body),
