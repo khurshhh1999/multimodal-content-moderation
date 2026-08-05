@@ -53,6 +53,8 @@ Open **[http://localhost:5173](http://localhost:5173)** — **Sentinel Desk** re
 |---------|-----|
 | Review UI | http://localhost:5173 |
 | API docs | http://localhost:8000/docs |
+| Prometheus | http://localhost:9090 |
+| Grafana | http://localhost:3000 (`admin` / `admin`, or anonymous Viewer) |
 | MinIO console | http://localhost:9001 (`minioadmin` / `minioadmin`) |
 | LocalStack | http://localhost:4566 |
 
@@ -67,6 +69,7 @@ Re-uploading the same image+caption+policy returns `deduplicated: true`.
 
 Ops & audit:
 - `GET /v1/metrics/summary` — queue depth, decisions/min, auto-resolve %, p95 latency  
+- `GET /metrics` — Prometheus text exposition (scraped by local Prometheus)  
 - `GET /v1/audit` — filterable audit trail (`entity_type`, `entity_id`, `actor`)
 
 ---
@@ -122,7 +125,8 @@ From `make eval` / `eval/reports/latest.json` on the synthetic labeled set (n=57
 
 These numbers come only from harness output on a synthetic fixture set for the local heuristic+rules path. Next step for résumé-grade claims: swap in human-labeled real images and re-run under `VISION_PROVIDER=aws|gcp`.
 
-Ops snapshot (live): `GET /v1/metrics/summary`.  
+Ops snapshot (live): `GET /v1/metrics/summary` and Prometheus `GET /metrics`.  
+Grafana **Moderation ops** dashboard is provisioned at http://localhost:3000 (datasource → local Prometheus).  
 Audit trail: `GET /v1/audit`.
 
 ### Résumé-ready bullets (architecture + measured)
@@ -143,7 +147,7 @@ packages/moderation_shared   Decision envelope + thresholds
 db/migrations     SQL schema
 eval/             Labeled set + harness
 scripts/          demo + seed + sample / labeled-set generators
-infra/            LocalStack SQS init (queue + DLQ)
+infra/            LocalStack SQS init, Prometheus scrape, Grafana dashboards
 ```
 
 ---

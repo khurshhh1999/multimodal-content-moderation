@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Response
+from prometheus_client import CONTENT_TYPE_LATEST
 
 from ..db import connection
+from ..prometheus_export import prometheus_payload
 from ..schemas import MetricsSummary
 
-router = APIRouter(prefix="/v1", tags=["metrics"])
+router = APIRouter(tags=["metrics"])
 
 
-@router.get("/metrics/summary", response_model=MetricsSummary)
-async def metrics_summary() -> MetricsSummary:
+async def fetch_metrics_summary() -> MetricsSummary:
     async with connection() as conn:
         pending = await conn.fetchval(
             "SELECT COUNT(*) FROM review_queue WHERE status = 'pending'"
@@ -62,3 +63,15 @@ async def metrics_summary() -> MetricsSummary:
         p95_latency_ms=float(p95) if p95 is not None else None,
         decisions_last_minute=int(last_min or 0),
     )
+
+
+@router.get("/v1/metrics/summary", response_model=MetricsSummary)
+async def metrics_summary() -> MetricsSummary:
+    return await fetch_metrics_summary()
+
+
+@router.get("/metrics")
+async def prometheus_metrics() -> Response:
+    """Prometheus text exposition of live moderation gauges."""
+    summary = await fetch_metrics_summary()
+    return Response(content=prometheus_payload(summary), media_type=CONTENT_TYPE_LATEST)
