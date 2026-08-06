@@ -60,7 +60,7 @@ Open **[http://localhost:5173](http://localhost:5173)** — **Sentinel Desk** re
 
 ## Happy path
 
-1. `POST /v1/content` uploads image + caption → content hash idempotency → object storage + queue job  
+1. `POST /v1/content` uploads image + caption (optional `X-Tenant-Id`) → per-tenant rate limit → content hash idempotency → object storage + queue job  
 2. Worker runs vision + policy fusion → threshold route (`auto_allow` / `auto_block` / soft `flag_band`) → writes `decisions`  
 3. Low-confidence / `FLAG` / soft-risk → `review_queue`  
 4. Reviewer **Claim → Approve/Reject** (Redis claim lock, notes required on override) → `audit_log`
@@ -70,7 +70,9 @@ Re-uploading the same image+caption+policy returns `deduplicated: true`.
 Ops & audit:
 - `GET /v1/metrics/summary` — queue depth, decisions/min, auto-resolve %, p95 latency  
 - `GET /metrics` — Prometheus text exposition (scraped by local Prometheus)  
-- `GET /v1/audit` — filterable audit trail (`entity_type`, `entity_id`, `actor`)
+- `GET /v1/audit` — filterable audit trail (`entity_type`, `entity_id`, `actor`)  
+- `./scripts/redrive.sh` — move SQS DLQ messages back to the main queue and reset `dead`/`failed` jobs  
+- Ingest rate limit — Redis fixed window per `X-Tenant-Id` (default tenant `default`); `429` + `Retry-After` when exceeded
 
 ---
 
@@ -86,8 +88,14 @@ Ops & audit:
 | `POLICY_VERSION` | e.g. `policy-v1` | Bump when changing threshold bands |
 | `AUTO_ALLOW` / `AUTO_BLOCK` | `0.85` / `0.90` | Confidence floors for auto-resolve |
 | `NSFW_FLAG` / `NSFW_BLOCK` | soft / hard vision bands | Soft band → human review |
+| `RATE_LIMIT_REQUESTS` / `RATE_LIMIT_WINDOW_SECONDS` | `60` / `60` | Per-tenant ingest cap; `0` requests disables |
+| `DEFAULT_TENANT_ID` | `default` | Used when `X-Tenant-Id` is missing/invalid |
 
 Local stack stays MinIO + LocalStack SQS. Flip the provider flags (and credentials) for a GCP path without changing pipeline code.
+
+### Tenant rate limits
+
+`POST /v1/content` is limited per tenant via Redis (`ratelimit:tenant:<id>:<window>`). Pass `X-Tenant-Id: acme` (alphanumeric / `.` `_` `-`, max 64). Responses include `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`; over-limit returns `429` with `Retry-After`. Tenant id is recorded on the enqueue audit event.
 
 ---
 
@@ -146,9 +154,30 @@ apps/dashboard    Sentinel Desk (React / Vite)
 packages/moderation_shared   Decision envelope + thresholds
 db/migrations     SQL schema
 eval/             Labeled set + harness
-scripts/          demo + seed + sample / labeled-set generators
+scripts/          demo + seed + DLQ redrive + sample / labeled-set generators
 infra/            LocalStack SQS init, Prometheus scrape, Grafana dashboards
 ```
+
+---
+
+## DLQ redrive
+
+After max receives, failed jobs land on `moderation-jobs-dlq`. To retry:
+
+```bash
+# Inspect depths
+./scripts/redrive.sh --stats
+
+# Plan without moving
+./scripts/redrive.sh --dry-run
+
+# Move up to 50 messages; reset matching dead/failed jobs in Postgres
+./scripts/redrive.sh
+
+# Or: make redrive ARGS='--limit 10 --job-id <uuid>'
+```
+
+Requires local stack (LocalStack SQS + Postgres). Uses `SQS_*` / `DATABASE_URL` from `.env`.
 
 ---
 

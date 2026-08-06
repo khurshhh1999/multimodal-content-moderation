@@ -36,6 +36,11 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:5173"
     allowed_content_types: str = "image/jpeg,image/png,image/webp,image/gif"
 
+    # Per-tenant ingest rate limit (Redis fixed window). Set RATE_LIMIT_REQUESTS=0 to disable.
+    default_tenant_id: str = "default"
+    rate_limit_requests: int = 60
+    rate_limit_window_seconds: int = 60
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -1,4 +1,4 @@
-.PHONY: up down logs demo samples seed labeled-set test eval venv
+.PHONY: up down logs demo samples seed labeled-set redrive test eval venv
 
 venv:
 	python3 -m venv .venv
@@ -22,12 +22,15 @@ seed: samples
 demo: samples
 	./scripts/demo.sh
 
+redrive:
+	./scripts/redrive.sh $(ARGS)
+
 labeled-set: samples
 	.venv/bin/python scripts/build_labeled_set.py
 
 test:
 	.venv/bin/pip install -q -r requirements-dev.txt
-	PYTHONPATH=apps/worker:packages/moderation_shared/src .venv/bin/pytest -q
+	PYTHONPATH=apps/api:apps/worker:packages/moderation_shared/src .venv/bin/pytest -q
 
 eval: labeled-set
 	PYTHONPATH=apps/worker:packages/moderation_shared/src .venv/bin/python eval/harness.py

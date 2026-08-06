@@ -3,12 +3,17 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, Header, HTTPException, Response, UploadFile
 
 from ..config import get_settings
 from ..db import connection
 from ..hashing import content_hash
 from ..queue import enqueue_job
+from ..rate_limit import (
+    check_tenant_rate_limit,
+    normalize_tenant_id,
+    rate_limit_headers,
+)
 from ..redis_client import acquire_ingest_lock
 from ..schemas import IngestResponse
 from ..storage import put_object
@@ -18,10 +23,32 @@ router = APIRouter(prefix="/v1", tags=["ingest"])
 
 @router.post("/content", response_model=IngestResponse)
 async def ingest_content(
+    response: Response,
     image: Annotated[UploadFile, File(...)],
     caption: Annotated[str, Form()] = "",
+    x_tenant_id: Annotated[str | None, Header()] = None,
 ) -> IngestResponse:
     settings = get_settings()
+    tenant_id = normalize_tenant_id(x_tenant_id, default=settings.default_tenant_id)
+
+    limit_decision = await check_tenant_rate_limit(
+        tenant_id,
+        limit=settings.rate_limit_requests,
+        window_seconds=settings.rate_limit_window_seconds,
+    )
+    for key, value in rate_limit_headers(limit_decision, tenant_id).items():
+        response.headers[key] = value
+    if not limit_decision.allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"Rate limit exceeded for tenant '{tenant_id}': "
+                f"{settings.rate_limit_requests} requests per "
+                f"{settings.rate_limit_window_seconds}s"
+            ),
+            headers=rate_limit_headers(limit_decision, tenant_id),
+        )
+
     allowed = {c.strip() for c in settings.allowed_content_types.split(",") if c.strip()}
 
     content_type = image.content_type or "application/octet-stream"
@@ -130,7 +157,7 @@ async def ingest_content(
                     VALUES ('job', $1, 'enqueued', 'api', $2::jsonb)
                     """,
                     job_id,
-                    f'{{"content_hash":"{digest}"}}',
+                    f'{{"content_hash":"{digest}","tenant_id":"{tenant_id}"}}',
                 )
             except Exception as exc:  # noqa: BLE001
                 # Unique violation race
