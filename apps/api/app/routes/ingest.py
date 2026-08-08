@@ -4,6 +4,7 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, File, Form, Header, HTTPException, Response, UploadFile
+from opentelemetry import trace
 
 from ..config import get_settings
 from ..db import connection
@@ -17,6 +18,7 @@ from ..rate_limit import (
 from ..redis_client import acquire_ingest_lock
 from ..schemas import IngestResponse
 from ..storage import put_object
+from ..telemetry import start_span
 
 router = APIRouter(prefix="/v1", tags=["ingest"])
 
@@ -30,6 +32,9 @@ async def ingest_content(
 ) -> IngestResponse:
     settings = get_settings()
     tenant_id = normalize_tenant_id(x_tenant_id, default=settings.default_tenant_id)
+    span = trace.get_current_span()
+    if span.is_recording():
+        span.set_attribute("moderation.tenant_id", tenant_id)
 
     limit_decision = await check_tenant_rate_limit(
         tenant_id,
@@ -115,50 +120,64 @@ async def ingest_content(
         else settings.s3_bucket
     )
 
+    if span.is_recording():
+        span.set_attribute("moderation.job_id", str(job_id))
+        span.set_attribute("moderation.content_id", str(content_id))
+        span.set_attribute("moderation.content_hash", digest)
+
     try:
-        put_object(
-            settings=settings,
-            key=object_key,
-            body=body,
-            content_type=content_type,
-        )
+        with start_span(
+            "ingest.store_object",
+            attributes={
+                "moderation.object_key": object_key,
+                "moderation.content_type": content_type,
+                "moderation.byte_size": len(body),
+            },
+        ):
+            put_object(
+                settings=settings,
+                key=object_key,
+                body=body,
+                content_type=content_type,
+            )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"Object storage failed: {exc}") from exc
 
     async with connection() as conn:
         async with conn.transaction():
             try:
-                await conn.execute(
-                    """
-                    INSERT INTO content_items
-                      (id, content_hash, object_key, bucket, caption, content_type, byte_size, source)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, 'api')
-                    """,
-                    content_id,
-                    digest,
-                    object_key,
-                    bucket,
-                    caption.strip(),
-                    content_type,
-                    len(body),
-                )
-                await conn.execute(
-                    """
-                    INSERT INTO jobs (id, content_id, content_hash, status)
-                    VALUES ($1, $2, $3, 'queued')
-                    """,
-                    job_id,
-                    content_id,
-                    digest,
-                )
-                await conn.execute(
-                    """
-                    INSERT INTO audit_log (entity_type, entity_id, action, actor, detail)
-                    VALUES ('job', $1, 'enqueued', 'api', $2::jsonb)
-                    """,
-                    job_id,
-                    f'{{"content_hash":"{digest}","tenant_id":"{tenant_id}"}}',
-                )
+                with start_span("ingest.persist_job"):
+                    await conn.execute(
+                        """
+                        INSERT INTO content_items
+                          (id, content_hash, object_key, bucket, caption, content_type, byte_size, source)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, 'api')
+                        """,
+                        content_id,
+                        digest,
+                        object_key,
+                        bucket,
+                        caption.strip(),
+                        content_type,
+                        len(body),
+                    )
+                    await conn.execute(
+                        """
+                        INSERT INTO jobs (id, content_id, content_hash, status)
+                        VALUES ($1, $2, $3, 'queued')
+                        """,
+                        job_id,
+                        content_id,
+                        digest,
+                    )
+                    await conn.execute(
+                        """
+                        INSERT INTO audit_log (entity_type, entity_id, action, actor, detail)
+                        VALUES ('job', $1, 'enqueued', 'api', $2::jsonb)
+                        """,
+                        job_id,
+                        f'{{"content_hash":"{digest}","tenant_id":"{tenant_id}"}}',
+                    )
             except Exception as exc:  # noqa: BLE001
                 # Unique violation race
                 if "unique" in str(exc).lower() or "duplicate" in str(exc).lower():

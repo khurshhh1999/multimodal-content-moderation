@@ -55,6 +55,7 @@ Open **[http://localhost:5173](http://localhost:5173)** — **Sentinel Desk** re
 | API docs | http://localhost:8000/docs |
 | Prometheus | http://localhost:9090 |
 | Grafana | http://localhost:3000 (`admin` / `admin`, or anonymous Viewer) |
+| Jaeger | http://localhost:16686 |
 | MinIO console | http://localhost:9001 (`minioadmin` / `minioadmin`) |
 | LocalStack | http://localhost:4566 |
 
@@ -72,7 +73,9 @@ Ops & audit:
 - `GET /metrics` — Prometheus text exposition (scraped by local Prometheus)  
 - `GET /v1/audit` — filterable audit trail (`entity_type`, `entity_id`, `actor`)  
 - `./scripts/redrive.sh` — move SQS DLQ messages back to the main queue and reset `dead`/`failed` jobs  
-- Ingest rate limit — Redis fixed window per `X-Tenant-Id` (default tenant `default`); `429` + `Retry-After` when exceeded
+- Ingest rate limit — Redis fixed window per `X-Tenant-Id` (default tenant `default`); `429` + `Retry-After` when exceeded  
+- Review/decision `image_url` values are **time-limited signed URLs** (MinIO/S3 presign or GCS V4); bucket is private by default  
+- Distributed traces — OpenTelemetry spans from ingest → queue → worker decision stages (Jaeger UI)
 
 ---
 
@@ -90,8 +93,21 @@ Ops & audit:
 | `NSFW_FLAG` / `NSFW_BLOCK` | soft / hard vision bands | Soft band → human review |
 | `RATE_LIMIT_REQUESTS` / `RATE_LIMIT_WINDOW_SECONDS` | `60` / `60` | Per-tenant ingest cap; `0` requests disables |
 | `DEFAULT_TENANT_ID` | `default` | Used when `X-Tenant-Id` is missing/invalid |
+| `SIGNED_URL_TTL_SECONDS` | `900` | Expiry for review/decision content image links |
+| `S3_PUBLIC_ENDPOINT_URL` | `http://localhost:9000` | Host embedded in MinIO/S3 presigned URLs (browser-reachable) |
+| `OTEL_ENABLED` | `false` (Compose: `true`) | Emit traces when set |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4318` | OTLP/HTTP collector (Jaeger in Compose) |
+| `OTEL_SERVICE_NAME` | `moderation-api` / `moderation-worker` | Resource `service.name` |
 
 Local stack stays MinIO + LocalStack SQS. Flip the provider flags (and credentials) for a GCP path without changing pipeline code.
+
+### Signed content URLs
+
+Review queue and decision responses return short-lived `image_url` links instead of permanent public object paths. MinIO/S3 uses path-style presigned `GetObject` URLs signed against `S3_PUBLIC_ENDPOINT_URL` (so the API can talk to `minio:9000` internally while the browser hits `localhost:9000`). GCS uses V4 signed URLs when a service-account JSON is configured. The Compose MinIO bucket is private (`anonymous none`); expired links stop serving bytes.
+
+### Distributed tracing
+
+Compose runs Jaeger with OTLP/HTTP. The API instruments FastAPI requests plus `ingest.*` / `queue.enqueue` spans; the worker continues the same W3C `traceparent` via SQS/Pub/Sub message attributes and records `worker.consume` → `pipeline.*` (validate, vision, llm, route, persist). Open http://localhost:16686 after a demo upload and search service `moderation-api` or `moderation-worker`.
 
 ### Tenant rate limits
 
@@ -157,6 +173,8 @@ eval/             Labeled set + harness
 scripts/          demo + seed + DLQ redrive + sample / labeled-set generators
 infra/            LocalStack SQS init, Prometheus scrape, Grafana dashboards
 ```
+
+Jaeger ships in Compose (OTLP :4318, UI :16686); no extra infra files required.
 
 ---
 

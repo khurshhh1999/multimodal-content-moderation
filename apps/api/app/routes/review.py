@@ -16,7 +16,7 @@ from ..redis_client import (
     release_review_claim,
 )
 from ..schemas import ClaimRequest, DecisionOut, ResolveRequest, ReviewItemOut
-from ..storage import public_url
+from ..storage import signed_url
 
 router = APIRouter(prefix="/v1", tags=["review"])
 
@@ -48,7 +48,7 @@ def _row_to_review(row: Any, settings) -> ReviewItemOut:
         vision_signals=dict(vision),
         llm_signals=dict(llm),
         caption=row["caption"] or "",
-        image_url=public_url(settings, row["object_key"]),
+        image_url=signed_url(settings, row["object_key"]),
         content_type=row["content_type"],
     )
 
@@ -310,7 +310,7 @@ async def list_decisions(limit: int = Query(default=50, ge=1, le=200)) -> list[D
                 needs_human_review=r["needs_human_review"],
                 created_at=r["created_at"],
                 caption=r["caption"],
-                image_url=public_url(settings, r["object_key"]),
+                image_url=signed_url(settings, r["object_key"]),
             )
         )
     return out
@@ -356,5 +356,5 @@ async def get_decision(decision_id: UUID) -> DecisionOut:
         needs_human_review=r["needs_human_review"],
         created_at=r["created_at"],
         caption=r["caption"],
-        image_url=public_url(settings, r["object_key"]),
+        image_url=signed_url(settings, r["object_key"]),
     )

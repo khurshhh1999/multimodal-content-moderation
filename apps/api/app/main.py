@@ -9,10 +9,29 @@ from .config import get_settings
 from .db import close_pool, init_pool
 from .redis_client import close_redis, init_redis
 from .routes import audit, ingest, metrics, review
+from .telemetry import setup_tracing
+
+_instrumented = False
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI):
+async def lifespan(app: FastAPI):
+    global _instrumented
+    settings = get_settings()
+    setup_tracing(
+        service_name=settings.otel_service_name,
+        enabled=settings.otel_enabled,
+        otlp_endpoint=settings.otel_exporter_otlp_endpoint,
+        console_exporter=settings.otel_console_exporter,
+    )
+    if settings.otel_enabled and not _instrumented:
+        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+
+        FastAPIInstrumentor.instrument_app(
+            app,
+            excluded_urls="health,/metrics",
+        )
+        _instrumented = True
     await init_pool()
     await init_redis()
     yield

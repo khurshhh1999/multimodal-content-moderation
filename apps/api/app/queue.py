@@ -5,8 +5,10 @@ from typing import Any
 from uuid import UUID
 
 import boto3
+from opentelemetry.trace import SpanKind
 
 from .config import Settings
+from .telemetry import inject_trace_context, start_span
 
 
 def _job_body(
@@ -29,6 +31,13 @@ def _job_body(
     }
 
 
+def _trace_message_attributes() -> dict[str, dict[str, str]]:
+    attrs: dict[str, dict[str, str]] = {}
+    for key, value in inject_trace_context().items():
+        attrs[key] = {"DataType": "String", "StringValue": value}
+    return attrs
+
+
 def enqueue_sqs(
     *,
     settings: Settings,
@@ -46,22 +55,35 @@ def enqueue_sqs(
         caption=caption,
         settings=settings,
     )
-    client = boto3.client(
-        "sqs",
-        endpoint_url=settings.sqs_endpoint_url,
-        aws_access_key_id=settings.aws_access_key_id,
-        aws_secret_access_key=settings.aws_secret_access_key,
-        region_name=settings.aws_default_region,
-    )
-    resp = client.send_message(
-        QueueUrl=settings.sqs_queue_url,
-        MessageBody=json.dumps(body),
-        MessageAttributes={
+    with start_span(
+        "queue.enqueue",
+        kind=SpanKind.PRODUCER,
+        attributes={
+            "messaging.system": "aws_sqs",
+            "messaging.destination.name": settings.sqs_queue_url,
+            "messaging.operation": "publish",
+            "moderation.job_id": str(job_id),
+            "moderation.content_hash": content_hash,
+        },
+    ):
+        client = boto3.client(
+            "sqs",
+            endpoint_url=settings.sqs_endpoint_url,
+            aws_access_key_id=settings.aws_access_key_id,
+            aws_secret_access_key=settings.aws_secret_access_key,
+            region_name=settings.aws_default_region,
+        )
+        message_attributes = {
             "content_hash": {"DataType": "String", "StringValue": content_hash},
             "job_id": {"DataType": "String", "StringValue": str(job_id)},
-        },
-    )
-    return resp["MessageId"]
+            **_trace_message_attributes(),
+        }
+        resp = client.send_message(
+            QueueUrl=settings.sqs_queue_url,
+            MessageBody=json.dumps(body),
+            MessageAttributes=message_attributes,
+        )
+        return resp["MessageId"]
 
 
 def enqueue_pubsub(
@@ -85,22 +107,38 @@ def enqueue_pubsub(
     )
     if not settings.gcp_project:
         raise RuntimeError("GCP_PROJECT is required when QUEUE_PROVIDER=pubsub")
-    client_kwargs: dict = {}
-    if settings.google_application_credentials:
-        from google.oauth2 import service_account  # type: ignore
 
-        client_kwargs["credentials"] = service_account.Credentials.from_service_account_file(
-            settings.google_application_credentials
+    with start_span(
+        "queue.enqueue",
+        kind=SpanKind.PRODUCER,
+        attributes={
+            "messaging.system": "gcp_pubsub",
+            "messaging.destination.name": settings.pubsub_topic,
+            "messaging.operation": "publish",
+            "moderation.job_id": str(job_id),
+            "moderation.content_hash": content_hash,
+        },
+    ):
+        client_kwargs: dict = {}
+        if settings.google_application_credentials:
+            from google.oauth2 import service_account  # type: ignore
+
+            client_kwargs["credentials"] = service_account.Credentials.from_service_account_file(
+                settings.google_application_credentials
+            )
+        publisher = pubsub_v1.PublisherClient(**client_kwargs)
+        topic_path = publisher.topic_path(settings.gcp_project, settings.pubsub_topic)
+        attrs = {
+            "content_hash": content_hash,
+            "job_id": str(job_id),
+            **inject_trace_context(),
+        }
+        future = publisher.publish(
+            topic_path,
+            json.dumps(body).encode("utf-8"),
+            **attrs,
         )
-    publisher = pubsub_v1.PublisherClient(**client_kwargs)
-    topic_path = publisher.topic_path(settings.gcp_project, settings.pubsub_topic)
-    future = publisher.publish(
-        topic_path,
-        json.dumps(body).encode("utf-8"),
-        content_hash=content_hash,
-        job_id=str(job_id),
-    )
-    return future.result(timeout=30)
+        return future.result(timeout=30)
 
 
 def enqueue_job(

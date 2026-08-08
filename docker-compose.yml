@@ -49,7 +49,7 @@ services:
         sleep 2;
       done;
       mc mb -p local/moderation-content || true;
-      mc anonymous set download local/moderation-content || true;
+      mc anonymous set none local/moderation-content || true;
       exit 0;
       "
 
@@ -68,6 +68,14 @@ services:
       interval: 5s
       timeout: 5s
       retries: 15
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.62
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686" # UI
+      - "4318:4318"   # OTLP/HTTP
 
   api:
     build:
@@ -90,6 +98,9 @@ services:
       AWS_SECRET_ACCESS_KEY: test
       AWS_DEFAULT_REGION: us-east-1
       CORS_ORIGINS: http://localhost:5173
+      OTEL_ENABLED: "true"
+      OTEL_SERVICE_NAME: moderation-api
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
     ports:
       - "8000:8000"
     depends_on:
@@ -101,6 +112,8 @@ services:
         condition: service_healthy
       minio-init:
         condition: service_completed_successfully
+      jaeger:
+        condition: service_started
 
   worker:
     build:
@@ -124,6 +137,9 @@ services:
       AWS_DEFAULT_REGION: us-east-1
       VISION_PROVIDER: local
       LLM_PROVIDER: rules
+      OTEL_ENABLED: "true"
+      OTEL_SERVICE_NAME: moderation-worker
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
     depends_on:
       postgres:
         condition: service_healthy
@@ -134,6 +150,8 @@ services:
       minio-init:
         condition: service_completed_successfully
       api:
+        condition: service_started
+      jaeger:
         condition: service_started
 
   dashboard:

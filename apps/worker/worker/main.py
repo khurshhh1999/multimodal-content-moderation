@@ -8,9 +8,17 @@ from uuid import UUID
 
 import asyncpg
 import boto3
+from opentelemetry.trace import SpanKind
 
 from .config import get_settings
 from .pipeline import ValidationError, process_job
+from .telemetry import (
+    attach_trace_context,
+    carrier_from_pubsub_attributes,
+    carrier_from_sqs_attributes,
+    setup_tracing,
+    start_span,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -124,9 +132,22 @@ async def poll_sqs(pool: asyncpg.Pool, settings) -> None:
 
         for msg in messages:
             receipt = msg["ReceiptHandle"]
+            carrier = carrier_from_sqs_attributes(msg.get("MessageAttributes"))
             try:
                 body = json.loads(msg["Body"])
-                await handle_message(pool, settings, body)
+                with attach_trace_context(carrier):
+                    with start_span(
+                        "worker.consume",
+                        kind=SpanKind.CONSUMER,
+                        attributes={
+                            "messaging.system": "aws_sqs",
+                            "messaging.operation": "process",
+                            "messaging.destination.name": settings.sqs_queue_url,
+                            "moderation.job_id": body.get("job_id"),
+                            "moderation.content_hash": body.get("content_hash"),
+                        },
+                    ):
+                        await handle_message(pool, settings, body)
                 await asyncio.to_thread(
                     client.delete_message,
                     QueueUrl=settings.sqs_queue_url,
@@ -189,9 +210,22 @@ async def poll_pubsub(pool: asyncpg.Pool, settings) -> None:
         ack_ids: list[str] = []
         nack_ids: list[str] = []
         for msg in received:
+            carrier = carrier_from_pubsub_attributes(dict(msg.message.attributes or {}))
             try:
                 body = json.loads(msg.message.data.decode("utf-8"))
-                await handle_message(pool, settings, body)
+                with attach_trace_context(carrier):
+                    with start_span(
+                        "worker.consume",
+                        kind=SpanKind.CONSUMER,
+                        attributes={
+                            "messaging.system": "gcp_pubsub",
+                            "messaging.operation": "process",
+                            "messaging.destination.name": settings.pubsub_subscription,
+                            "moderation.job_id": body.get("job_id"),
+                            "moderation.content_hash": body.get("content_hash"),
+                        },
+                    ):
+                        await handle_message(pool, settings, body)
                 ack_ids.append(msg.ack_id)
             except ValidationError:
                 ack_ids.append(msg.ack_id)
@@ -225,6 +259,12 @@ async def poll_loop(pool: asyncpg.Pool) -> None:
 
 async def main() -> None:
     settings = get_settings()
+    setup_tracing(
+        service_name=settings.otel_service_name,
+        enabled=settings.otel_enabled,
+        otlp_endpoint=settings.otel_exporter_otlp_endpoint,
+        console_exporter=settings.otel_console_exporter,
+    )
     pool = await asyncpg.create_pool(dsn=settings.database_url, min_size=1, max_size=5)
 
     loop = asyncio.get_running_loop()

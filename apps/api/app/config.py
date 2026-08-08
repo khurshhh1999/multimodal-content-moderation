@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     google_application_credentials: str = ""
     pubsub_topic: str = "moderation-jobs"
 
+    # TTL for review/decision image links (S3/MinIO presign or GCS V4 signed URL).
+    signed_url_ttl_seconds: int = 900
+
     sqs_endpoint_url: str = "http://localhost:4566"
     sqs_queue_url: str = "http://localhost:4566/000000000000/moderation-jobs"
     aws_access_key_id: str = "test"
@@ -40,6 +43,12 @@ class Settings(BaseSettings):
     default_tenant_id: str = "default"
     rate_limit_requests: int = 60
     rate_limit_window_seconds: int = 60
+
+    # OpenTelemetry (OTLP/HTTP → Jaeger or any collector).
+    otel_enabled: bool = False
+    otel_service_name: str = "moderation-api"
+    otel_exporter_otlp_endpoint: str = ""
+    otel_console_exporter: bool = False
 
 
 @lru_cache

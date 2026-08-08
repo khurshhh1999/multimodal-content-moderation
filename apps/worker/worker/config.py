@@ -48,6 +48,12 @@ class Settings(BaseSettings):
     poll_wait_seconds: int = 10
     visibility_timeout: int = 60
 
+    # OpenTelemetry (OTLP/HTTP → Jaeger or any collector).
+    otel_enabled: bool = False
+    otel_service_name: str = "moderation-worker"
+    otel_exporter_otlp_endpoint: str = ""
+    otel_console_exporter: bool = False
+
 
 @lru_cache
 def get_settings() -> Settings:

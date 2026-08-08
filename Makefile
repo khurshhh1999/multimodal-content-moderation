@@ -11,7 +11,7 @@ down:
 	docker compose down
 
 logs:
-	docker compose logs -f api worker dashboard prometheus grafana
+	docker compose logs -f api worker dashboard prometheus grafana jaeger
 
 samples:
 	.venv/bin/python scripts/generate_samples.py
