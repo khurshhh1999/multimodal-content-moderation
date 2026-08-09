@@ -1,0 +1,23 @@
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["apps/api", "apps/worker", "packages/moderation_shared/src", "tests", "scripts", "eval"]
+
+[tool.ruff.lint]
+# Keep CI lint focused on correctness (errors + unused/undefined) to avoid style churn.
+select = ["E", "F"]
+ignore = [
+  "E501",  # line length; prefer readable diffs over reformatting pass
+]
+
+[tool.ruff.lint.per-file-ignores]
+"scripts/*" = ["E402"]
+"eval/*" = ["E402"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [
+  "apps/api",
+  "apps/worker",
+  "packages/moderation_shared/src",
+]

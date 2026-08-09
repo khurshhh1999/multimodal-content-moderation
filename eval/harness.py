@@ -7,6 +7,7 @@ Do NOT invent résumé metrics — paste output from this script into README.
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from collections import Counter
@@ -27,9 +28,38 @@ def _f1(precision: float, recall: float) -> float:
     return 2 * precision * recall / (precision + recall)
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Run labeled-set eval harness")
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Evaluate only the first N samples (smoke / quick runs)",
+    )
+    parser.add_argument(
+        "--min-n",
+        type=int,
+        default=1,
+        help="Fail if fewer than N samples were evaluated",
+    )
+    args = parser.parse_args(argv)
+
     manifest_path = ROOT / "eval" / "labeled_set" / "manifest.json"
+    if not manifest_path.exists():
+        print(
+            f"Missing {manifest_path}; run: "
+            "python scripts/generate_samples.py && python scripts/build_labeled_set.py"
+        )
+        return 1
+
     manifest = json.loads(manifest_path.read_text())
+    samples = list(manifest["samples"])
+    if args.limit is not None:
+        if args.limit < 1:
+            print("error: --limit must be >= 1", file=sys.stderr)
+            return 2
+        samples = samples[: args.limit]
+
     vision = LocalHeuristicVision()
     llm = RulesPolicyClassifier()
     thresholds = ThresholdConfig()
@@ -38,14 +68,14 @@ def main() -> None:
     y_pred: list[str] = []
     auto = 0
 
-    for sample in manifest["samples"]:
+    for sample in samples:
         image_path = ROOT / sample["image"]
         if not image_path.exists():
             print(
                 f"Missing image {image_path}; run: "
                 "python scripts/generate_samples.py && python scripts/build_labeled_set.py"
             )
-            sys.exit(1)
+            return 1
         image_bytes = image_path.read_bytes()
         caption = sample["caption"]
         v = vision.analyze(image_bytes, caption)
@@ -61,6 +91,13 @@ def main() -> None:
         y_pred.append(final.value)
         if not needs_review:
             auto += 1
+
+    if len(y_true) < args.min_n:
+        print(
+            f"error: evaluated n={len(y_true)} < --min-n {args.min_n}",
+            file=sys.stderr,
+        )
+        return 1
 
     labels = ["ALLOW", "FLAG", "BLOCK"]
     correct = sum(1 for a, b in zip(y_true, y_pred) if a == b)
@@ -80,9 +117,9 @@ def main() -> None:
             "support": sum(1 for a in y_true if a == label),
         }
 
-    macro_p = sum(per_class[l]["precision"] for l in labels) / len(labels)
-    macro_r = sum(per_class[l]["recall"] for l in labels) / len(labels)
-    macro_f1 = sum(per_class[l]["f1"] for l in labels) / len(labels)
+    macro_p = sum(per_class[label]["precision"] for label in labels) / len(labels)
+    macro_r = sum(per_class[label]["recall"] for label in labels) / len(labels)
+    macro_f1 = sum(per_class[label]["f1"] for label in labels) / len(labels)
     auto_rate = auto / len(y_true) if y_true else 0.0
     # Manual review reduction vs send-everything baseline
     manual_reduction = auto_rate
@@ -119,7 +156,8 @@ def main() -> None:
     }
     print(json.dumps(printable, indent=2))
     print(f"\nWrote {out_path}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

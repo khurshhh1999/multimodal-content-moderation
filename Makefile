@@ -1,4 +1,4 @@
-.PHONY: up down logs demo samples seed labeled-set redrive test eval venv
+.PHONY: up down logs demo samples seed labeled-set redrive test lint eval eval-smoke dashboard-build ci venv
 
 venv:
 	python3 -m venv .venv
@@ -28,9 +28,21 @@ redrive:
 labeled-set: samples
 	.venv/bin/python scripts/build_labeled_set.py
 
+lint:
+	.venv/bin/pip install -q -r requirements-dev.txt
+	.venv/bin/ruff check apps packages tests scripts eval
+
 test:
 	.venv/bin/pip install -q -r requirements-dev.txt
-	PYTHONPATH=apps/api:apps/worker:packages/moderation_shared/src .venv/bin/pytest -q
+	.venv/bin/pytest -q
 
 eval: labeled-set
 	PYTHONPATH=apps/worker:packages/moderation_shared/src .venv/bin/python eval/harness.py
+
+eval-smoke: labeled-set
+	PYTHONPATH=apps/worker:packages/moderation_shared/src .venv/bin/python eval/harness.py --min-n 50
+
+dashboard-build:
+	cd apps/dashboard && npm ci && npm run build
+
+ci: lint test eval-smoke dashboard-build

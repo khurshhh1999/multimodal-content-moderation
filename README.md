@@ -199,12 +199,20 @@ Requires local stack (LocalStack SQS + Postgres). Uses `SQS_*` / `DATABASE_URL` 
 
 ---
 
-## Tests
+## Tests & CI
+
+Local:
 
 ```bash
-pip install -r requirements-dev.txt
-pytest -q
+make venv          # once
+make lint          # ruff
+make test          # pytest
+make eval-smoke    # labeled set + harness (--min-n 50)
+make dashboard-build
+# or: make ci
 ```
+
+Pull requests run GitHub Actions (`.github/workflows/ci.yml`): Python lint, unit tests, eval smoke, and dashboard `npm run build`.
 
 ---
 

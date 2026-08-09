@@ -368,7 +368,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.stats:
         queue_provider = env("QUEUE_PROVIDER", "sqs").lower()
         if queue_provider != "sqs":
-            print(f"error: --stats requires QUEUE_PROVIDER=sqs", file=sys.stderr)
+            print("error: --stats requires QUEUE_PROVIDER=sqs", file=sys.stderr)
             return 2
         client = _sqs_client()
         main_url = env("SQS_QUEUE_URL", "http://localhost:4566/000000000000/moderation-jobs")
