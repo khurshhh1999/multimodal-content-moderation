@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from typing import Any
 from uuid import UUID
 
@@ -15,6 +15,7 @@ from ..redis_client import (
     get_review_claim_owner,
     release_review_claim,
 )
+from ..review_claims import release_expired_claims, utcnow
 from ..schemas import ClaimRequest, DecisionOut, ResolveRequest, ReviewItemOut
 from ..storage import signed_url
 
@@ -60,6 +61,7 @@ async def list_reviews(
 ) -> list[ReviewItemOut]:
     settings = get_settings()
     async with connection() as conn:
+        await release_expired_claims(conn)
         if status:
             rows = await conn.fetch(
                 """
@@ -94,7 +96,7 @@ async def list_reviews(
 @router.post("/reviews/{review_id}/claim", response_model=ReviewItemOut)
 async def claim_review(review_id: UUID, body: ClaimRequest) -> ReviewItemOut:
     settings = get_settings()
-    now = datetime.now(timezone.utc)
+    now = utcnow()
     expires = now + timedelta(seconds=CLAIM_TTL_SECONDS)
 
     ok, owner = await acquire_review_claim(str(review_id), body.reviewer)
@@ -105,6 +107,7 @@ async def claim_review(review_id: UUID, body: ClaimRequest) -> ReviewItemOut:
         )
 
     async with connection() as conn:
+        await release_expired_claims(conn, now=now)
         row = await conn.fetchrow(
             """
             UPDATE review_queue
@@ -170,7 +173,7 @@ async def claim_review(review_id: UUID, body: ClaimRequest) -> ReviewItemOut:
 @router.post("/reviews/{review_id}/resolve", response_model=ReviewItemOut)
 async def resolve_review(review_id: UUID, body: ResolveRequest) -> ReviewItemOut:
     settings = get_settings()
-    now = datetime.now(timezone.utc)
+    now = utcnow()
     status = "approved" if body.reviewer_decision == "ALLOW" else "rejected"
     notes = (body.notes or "").strip()
 

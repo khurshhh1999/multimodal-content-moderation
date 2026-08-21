@@ -13,10 +13,22 @@ router = APIRouter(tags=["metrics"])
 async def fetch_metrics_summary() -> MetricsSummary:
     async with connection() as conn:
         pending = await conn.fetchval(
-            "SELECT COUNT(*) FROM review_queue WHERE status = 'pending'"
+            """
+            SELECT COUNT(*) FROM review_queue
+            WHERE status = 'pending'
+               OR (
+                    status = 'claimed'
+                    AND (claim_expires_at IS NULL OR claim_expires_at < now())
+                  )
+            """
         )
         claimed = await conn.fetchval(
-            "SELECT COUNT(*) FROM review_queue WHERE status = 'claimed'"
+            """
+            SELECT COUNT(*) FROM review_queue
+            WHERE status = 'claimed'
+              AND claim_expires_at IS NOT NULL
+              AND claim_expires_at >= now()
+            """
         )
         queued_jobs = await conn.fetchval(
             "SELECT COUNT(*) FROM jobs WHERE status IN ('queued', 'processing')"

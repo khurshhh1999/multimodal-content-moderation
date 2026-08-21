@@ -193,6 +193,7 @@ textarea {
 
 .queue-item .meta {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: 0.5rem;
   margin-bottom: 0.35rem;

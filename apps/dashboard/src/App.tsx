@@ -5,6 +5,14 @@ function pct(n: number) {
   return `${Math.round(n * 100)}%`;
 }
 
+function claimLockLabel(item: ReviewItem): string | null {
+  if (item.status !== "claimed" || !item.claim_expires_at) return null;
+  const ms = new Date(item.claim_expires_at).getTime() - Date.now();
+  if (Number.isNaN(ms) || ms <= 0) return "lock expired";
+  const mins = Math.max(1, Math.round(ms / 60000));
+  return `${mins}m lock`;
+}
+
 function ScoreBar({ label, value }: { label: string; value: number }) {
   return (
     <div className="score">
@@ -122,7 +130,9 @@ export default function App() {
           )}
 
           <div className="queue-list">
-            {items.map((item) => (
+            {items.map((item) => {
+              const lock = claimLockLabel(item);
+              return (
               <button
                 key={item.id}
                 className={`queue-item ${selected?.id === item.id ? "active" : ""}`}
@@ -134,10 +144,12 @@ export default function App() {
                 <div className="meta">
                   <span className={`badge ${item.decision}`}>{item.decision}</span>
                   <span className="badge neutral">{pct(item.confidence)}</span>
+                  {lock && <span className="badge neutral">{lock}</span>}
                 </div>
                 <p>{item.caption || "(no caption)"}</p>
               </button>
-            ))}
+              );
+            })}
             {!items.length && (
               <p style={{ color: "var(--muted)", fontSize: "0.9rem" }}>
                 Queue clear. New FLAG / low-confidence items land here.
@@ -170,6 +182,9 @@ export default function App() {
                   <span className={`badge ${selected.decision}`}>{selected.decision}</span>
                   <span className="badge neutral">conf {selected.confidence.toFixed(2)}</span>
                   <span className="badge neutral">{selected.status}</span>
+                  {claimLockLabel(selected) && (
+                    <span className="badge neutral">{claimLockLabel(selected)}</span>
+                  )}
                 </div>
 
                 <div className="scores">
