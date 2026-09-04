@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     policy_version: str = "policy-v1"
     pipeline_version: str = "pipeline-v1"
     max_upload_bytes: int = 10 * 1024 * 1024
+    ingest_url_timeout_seconds: float = 10.0
     cors_origins: str = "http://localhost:5173"
     allowed_content_types: str = "image/jpeg,image/png,image/webp,image/gif"
 

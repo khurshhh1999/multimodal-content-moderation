@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
-from .db import close_pool, init_pool
-from .redis_client import close_redis, init_redis
+from .db import close_pool, connection, init_pool
+from .redis_client import close_redis, get_redis, init_redis
 from .routes import audit, ingest, metrics, review
 from .telemetry import setup_tracing
 
@@ -29,7 +29,7 @@ async def lifespan(app: FastAPI):
 
         FastAPIInstrumentor.instrument_app(
             app,
-            excluded_urls="health,/metrics",
+            excluded_urls="health,ready,/metrics",
         )
         _instrumented = True
     await init_pool()
@@ -65,3 +65,33 @@ app.include_router(audit.router)
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok", "service": "api"}
+
+
+@app.get("/ready")
+async def ready() -> dict:
+    """Liveness is `/health`; this checks Postgres + Redis before taking traffic."""
+    checks: dict[str, str] = {}
+    try:
+        async with connection() as conn:
+            await conn.execute("SELECT 1")
+        checks["postgres"] = "ok"
+    except Exception as exc:  # noqa: BLE001
+        checks["postgres"] = "error"
+        raise HTTPException(
+            status_code=503,
+            detail={"status": "not_ready", "checks": checks, "error": str(exc)[:200]},
+        ) from exc
+
+    try:
+        pong = await get_redis().ping()
+        if not pong:
+            raise RuntimeError("redis ping returned false")
+        checks["redis"] = "ok"
+    except Exception as exc:  # noqa: BLE001
+        checks["redis"] = "error"
+        raise HTTPException(
+            status_code=503,
+            detail={"status": "not_ready", "checks": checks, "error": str(exc)[:200]},
+        ) from exc
+
+    return {"status": "ok", "service": "api", "checks": checks}

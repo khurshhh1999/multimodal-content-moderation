@@ -1,26 +1,41 @@
 from __future__ import annotations
 
-import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, File, Form, Header, HTTPException, Response, UploadFile
 from opentelemetry import trace
 
 from ..config import get_settings
-from ..db import connection
-from ..hashing import content_hash
-from ..queue import enqueue_job
+from ..ingest_service import accept_image, apply_rate_limit_headers
 from ..rate_limit import (
     check_tenant_rate_limit,
     normalize_tenant_id,
     rate_limit_headers,
 )
-from ..redis_client import acquire_ingest_lock
-from ..schemas import IngestResponse
-from ..storage import put_object
-from ..telemetry import start_span
+from ..schemas import IngestResponse, IngestUrlRequest
+from ..url_fetch import ImageFetchError, UnsafeImageUrl, fetch_image_bytes
 
 router = APIRouter(prefix="/v1", tags=["ingest"])
+
+
+async def _rate_limit(response: Response, tenant_id: str):
+    settings = get_settings()
+    decision = await check_tenant_rate_limit(
+        tenant_id,
+        limit=settings.rate_limit_requests,
+        window_seconds=settings.rate_limit_window_seconds,
+    )
+    apply_rate_limit_headers(response, rate_limit_headers(decision, tenant_id))
+    if not decision.allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"Rate limit exceeded for tenant '{tenant_id}': "
+                f"{settings.rate_limit_requests} requests per "
+                f"{settings.rate_limit_window_seconds}s"
+            ),
+            headers=rate_limit_headers(decision, tenant_id),
+        )
 
 
 @router.post("/content", response_model=IngestResponse)
@@ -35,199 +50,67 @@ async def ingest_content(
     span = trace.get_current_span()
     if span.is_recording():
         span.set_attribute("moderation.tenant_id", tenant_id)
+        span.set_attribute("moderation.ingest_source", "multipart")
 
-    limit_decision = await check_tenant_rate_limit(
-        tenant_id,
-        limit=settings.rate_limit_requests,
-        window_seconds=settings.rate_limit_window_seconds,
-    )
-    for key, value in rate_limit_headers(limit_decision, tenant_id).items():
-        response.headers[key] = value
-    if not limit_decision.allowed:
-        raise HTTPException(
-            status_code=429,
-            detail=(
-                f"Rate limit exceeded for tenant '{tenant_id}': "
-                f"{settings.rate_limit_requests} requests per "
-                f"{settings.rate_limit_window_seconds}s"
-            ),
-            headers=rate_limit_headers(limit_decision, tenant_id),
-        )
-
-    allowed = {c.strip() for c in settings.allowed_content_types.split(",") if c.strip()}
+    await _rate_limit(response, tenant_id)
 
     content_type = image.content_type or "application/octet-stream"
-    if content_type not in allowed:
-        raise HTTPException(status_code=415, detail=f"Unsupported content type: {content_type}")
-
     body = await image.read()
-    if not body:
-        raise HTTPException(status_code=400, detail="Empty file")
-    if len(body) > settings.max_upload_bytes:
-        raise HTTPException(status_code=413, detail="File exceeds max upload size")
-
-    digest = content_hash(body, caption, settings.policy_version)
-
-    async with connection() as conn:
-        existing = await conn.fetchrow(
-            """
-            SELECT j.id AS job_id, c.id AS content_id, j.status
-            FROM jobs j
-            JOIN content_items c ON c.id = j.content_id
-            WHERE j.content_hash = $1
-            """,
-            digest,
-        )
-        if existing:
-            return IngestResponse(
-                job_id=existing["job_id"],
-                content_id=existing["content_id"],
-                content_hash=digest,
-                status=existing["status"],
-                deduplicated=True,
-                message="idempotent hit — existing job returned",
-            )
-
-    got_lock = await acquire_ingest_lock(digest)
-    if not got_lock:
-        # Another request is writing the same hash; wait briefly via DB uniqueness
-        async with connection() as conn:
-            for _ in range(20):
-                row = await conn.fetchrow(
-                    "SELECT id AS job_id, content_id, status FROM jobs WHERE content_hash = $1",
-                    digest,
-                )
-                if row:
-                    return IngestResponse(
-                        job_id=row["job_id"],
-                        content_id=row["content_id"],
-                        content_hash=digest,
-                        status=row["status"],
-                        deduplicated=True,
-                        message="idempotent hit — concurrent ingest",
-                    )
-                import asyncio
-
-                await asyncio.sleep(0.05)
-        raise HTTPException(status_code=409, detail="Concurrent ingest in progress; retry")
-
-    content_id = uuid.uuid4()
-    job_id = uuid.uuid4()
-    object_key = f"content/{digest[:2]}/{digest}/{content_id}.{_ext(content_type)}"
-    bucket = (
-        settings.gcs_bucket
-        if settings.storage_provider.lower() == "gcs"
-        else settings.s3_bucket
+    result = await accept_image(
+        settings=settings,
+        body=body,
+        caption=caption,
+        content_type=content_type,
+        tenant_id=tenant_id,
+        source="api",
     )
-
     if span.is_recording():
-        span.set_attribute("moderation.job_id", str(job_id))
-        span.set_attribute("moderation.content_id", str(content_id))
-        span.set_attribute("moderation.content_hash", digest)
+        span.set_attribute("moderation.job_id", str(result.job_id))
+        span.set_attribute("moderation.content_id", str(result.content_id))
+        span.set_attribute("moderation.content_hash", result.content_hash)
+        span.set_attribute("moderation.deduplicated", result.deduplicated)
+    return result
+
+
+@router.post("/content/url", response_model=IngestResponse)
+async def ingest_content_from_url(
+    payload: IngestUrlRequest,
+    response: Response,
+    x_tenant_id: Annotated[str | None, Header()] = None,
+) -> IngestResponse:
+    settings = get_settings()
+    tenant_id = normalize_tenant_id(x_tenant_id, default=settings.default_tenant_id)
+    span = trace.get_current_span()
+    if span.is_recording():
+        span.set_attribute("moderation.tenant_id", tenant_id)
+        span.set_attribute("moderation.ingest_source", "url")
+
+    await _rate_limit(response, tenant_id)
 
     try:
-        with start_span(
-            "ingest.store_object",
-            attributes={
-                "moderation.object_key": object_key,
-                "moderation.content_type": content_type,
-                "moderation.byte_size": len(body),
-            },
-        ):
-            put_object(
-                settings=settings,
-                key=object_key,
-                body=body,
-                content_type=content_type,
-            )
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=502, detail=f"Object storage failed: {exc}") from exc
-
-    async with connection() as conn:
-        async with conn.transaction():
-            try:
-                with start_span("ingest.persist_job"):
-                    await conn.execute(
-                        """
-                        INSERT INTO content_items
-                          (id, content_hash, object_key, bucket, caption, content_type, byte_size, source)
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, 'api')
-                        """,
-                        content_id,
-                        digest,
-                        object_key,
-                        bucket,
-                        caption.strip(),
-                        content_type,
-                        len(body),
-                    )
-                    await conn.execute(
-                        """
-                        INSERT INTO jobs (id, content_id, content_hash, status)
-                        VALUES ($1, $2, $3, 'queued')
-                        """,
-                        job_id,
-                        content_id,
-                        digest,
-                    )
-                    await conn.execute(
-                        """
-                        INSERT INTO audit_log (entity_type, entity_id, action, actor, detail)
-                        VALUES ('job', $1, 'enqueued', 'api', $2::jsonb)
-                        """,
-                        job_id,
-                        f'{{"content_hash":"{digest}","tenant_id":"{tenant_id}"}}',
-                    )
-            except Exception as exc:  # noqa: BLE001
-                # Unique violation race
-                if "unique" in str(exc).lower() or "duplicate" in str(exc).lower():
-                    row = await conn.fetchrow(
-                        "SELECT id AS job_id, content_id, status FROM jobs WHERE content_hash = $1",
-                        digest,
-                    )
-                    if row:
-                        return IngestResponse(
-                            job_id=row["job_id"],
-                            content_id=row["content_id"],
-                            content_hash=digest,
-                            status=row["status"],
-                            deduplicated=True,
-                            message="idempotent hit — race resolved",
-                        )
-                raise
-
-    try:
-        enqueue_job(
-            settings=settings,
-            job_id=job_id,
-            content_id=content_id,
-            content_hash=digest,
-            object_key=object_key,
-            caption=caption.strip(),
+        body, content_type = fetch_image_bytes(
+            str(payload.image_url),
+            max_bytes=settings.max_upload_bytes,
+            timeout=settings.ingest_url_timeout_seconds,
         )
-    except Exception as exc:  # noqa: BLE001
-        async with connection() as conn:
-            await conn.execute(
-                "UPDATE jobs SET status = 'failed', last_error = $2 WHERE id = $1",
-                job_id,
-                f"enqueue failed: {exc}",
-            )
-        raise HTTPException(status_code=502, detail=f"Queue enqueue failed: {exc}") from exc
+    except UnsafeImageUrl as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ImageFetchError as exc:
+        detail = str(exc)
+        status = 413 if "exceeds max" in detail else 502
+        raise HTTPException(status_code=status, detail=detail) from exc
 
-    return IngestResponse(
-        job_id=job_id,
-        content_id=content_id,
-        content_hash=digest,
-        status="queued",
-        deduplicated=False,
-        message="accepted",
+    result = await accept_image(
+        settings=settings,
+        body=body,
+        caption=payload.caption,
+        content_type=content_type,
+        tenant_id=tenant_id,
+        source="url",
     )
-
-
-def _ext(content_type: str) -> str:
-    return {
-        "image/jpeg": "jpg",
-        "image/png": "png",
-        "image/webp": "webp",
-        "image/gif": "gif",
-    }.get(content_type, "bin")
+    if span.is_recording():
+        span.set_attribute("moderation.job_id", str(result.job_id))
+        span.set_attribute("moderation.content_id", str(result.content_id))
+        span.set_attribute("moderation.content_hash", result.content_hash)
+        span.set_attribute("moderation.deduplicated", result.deduplicated)
+    return result

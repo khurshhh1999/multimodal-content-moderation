@@ -103,6 +103,11 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
     ports:
       - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/ready"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
     depends_on:
       postgres:
         condition: service_healthy
@@ -150,7 +155,7 @@ services:
       minio-init:
         condition: service_completed_successfully
       api:
-        condition: service_started
+        condition: service_healthy
       jaeger:
         condition: service_started
 

@@ -4,14 +4,14 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 API="${API_BASE:-http://localhost:8000}"
 
-echo "==> Waiting for API health..."
+echo "==> Waiting for API readiness (postgres + redis)..."
 for i in $(seq 1 60); do
-  if curl -sf "$API/health" >/dev/null; then
+  if curl -sf "$API/ready" >/dev/null; then
     break
   fi
   sleep 2
   if [[ $i -eq 60 ]]; then
-    echo "API not healthy at $API"
+    echo "API not ready at $API"
     exit 1
   fi
 done

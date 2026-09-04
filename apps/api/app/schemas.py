@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, HttpUrl
 
 
 class IngestResponse(BaseModel):
@@ -14,6 +14,11 @@ class IngestResponse(BaseModel):
     status: str
     deduplicated: bool = False
     message: str = "accepted"
+
+
+class IngestUrlRequest(BaseModel):
+    image_url: HttpUrl
+    caption: str = ""
 
 
 class DecisionOut(BaseModel):

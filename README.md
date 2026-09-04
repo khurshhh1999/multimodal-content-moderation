@@ -2,7 +2,7 @@
 
 Event-driven moderation for **images + captions**: ingest → validate → vision signals → policy classifier → confidence routing → human review → audit/eval.
 
-Built as a portfolio system (not a thin cloud API wrapper): idempotent jobs, retries/DLQ, structured decision envelopes, pluggable AWS/GCP adapters, and a review-desk UI.
+The pipeline combines idempotent jobs, retry and dead-letter handling, structured decision envelopes, pluggable AWS/GCP adapters, and a human review desk.
 
 ---
 
@@ -61,20 +61,23 @@ Open **[http://localhost:5173](http://localhost:5173)** — **Sentinel Desk** re
 
 ## Happy path
 
-1. `POST /v1/content` uploads image + caption (optional `X-Tenant-Id`) → per-tenant rate limit → content hash idempotency → object storage + queue job  
-2. Worker runs vision + policy fusion → threshold route (`auto_allow` / `auto_block` / soft `flag_band`) → writes `decisions`  
-3. Low-confidence / `FLAG` / soft-risk → `review_queue`  
-4. Reviewer **Claim → Approve/Reject** (Redis claim lock, notes required on override) → `audit_log`
+1. `POST /v1/content` (multipart image + caption) or `POST /v1/content/url` (JSON `{image_url, caption}`) with optional `X-Tenant-Id` → per-tenant rate limit → content hash idempotency → object storage + queue job
+2. Worker runs vision + policy fusion → threshold route (`auto_allow` / `auto_block` / soft `flag_band`) → writes `decisions`
+3. Low-confidence / `FLAG` / soft-risk → `review_queue`
+4. Reviewer **Claim → Approve/Reject** (Redis claim lock, notes required on override) → `audit_log`. Locks last 15 minutes; expired claims return to pending so the queue cannot hide work behind a dead lock.
 
 Re-uploading the same image+caption+policy returns `deduplicated: true`.
 
 Ops & audit:
-- `GET /v1/metrics/summary` — queue depth, decisions/min, auto-resolve %, p95 latency  
-- `GET /metrics` — Prometheus text exposition (scraped by local Prometheus)  
-- `GET /v1/audit` — filterable audit trail (`entity_type`, `entity_id`, `actor`)  
-- `./scripts/redrive.sh` — move SQS DLQ messages back to the main queue and reset `dead`/`failed` jobs  
-- Ingest rate limit — Redis fixed window per `X-Tenant-Id` (default tenant `default`); `429` + `Retry-After` when exceeded  
-- Review/decision `image_url` values are **time-limited signed URLs** (MinIO/S3 presign or GCS V4); bucket is private by default  
+
+- `GET /health` — process liveness
+- `GET /ready` — Postgres + Redis (Compose API healthcheck; worker waits for this)
+- `GET /v1/metrics/summary` — queue depth, decisions/min, auto-resolve %, p95 latency
+- `GET /metrics` — Prometheus text exposition (scraped by local Prometheus)
+- `GET /v1/audit` — filterable audit trail (`entity_type`, `entity_id`, `actor`)
+- `./scripts/redrive.sh` — move SQS DLQ messages back to the main queue and reset `dead`/`failed` jobs
+- Ingest rate limit — Redis fixed window per `X-Tenant-Id` (default tenant `default`); `429` + `Retry-After` when exceeded
+- Review/decision `image_url` values are **time-limited signed URLs** (MinIO/S3 presign or GCS V4); bucket is private by default
 - Distributed traces — OpenTelemetry spans from ingest → queue → worker decision stages (Jaeger UI)
 
 ---
@@ -92,6 +95,7 @@ Ops & audit:
 | `AUTO_ALLOW` / `AUTO_BLOCK` | `0.85` / `0.90` | Confidence floors for auto-resolve |
 | `NSFW_FLAG` / `NSFW_BLOCK` | soft / hard vision bands | Soft band → human review |
 | `RATE_LIMIT_REQUESTS` / `RATE_LIMIT_WINDOW_SECONDS` | `60` / `60` | Per-tenant ingest cap; `0` requests disables |
+| `INGEST_URL_TIMEOUT_SECONDS` | `10` | Timeout for `POST /v1/content/url` downloads |
 | `DEFAULT_TENANT_ID` | `default` | Used when `X-Tenant-Id` is missing/invalid |
 | `SIGNED_URL_TTL_SECONDS` | `900` | Expiry for review/decision content image links |
 | `S3_PUBLIC_ENDPOINT_URL` | `http://localhost:9000` | Host embedded in MinIO/S3 presigned URLs (browser-reachable) |
@@ -111,17 +115,25 @@ Compose runs Jaeger with OTLP/HTTP. The API instruments FastAPI requests plus `i
 
 ### Tenant rate limits
 
-`POST /v1/content` is limited per tenant via Redis (`ratelimit:tenant:<id>:<window>`). Pass `X-Tenant-Id: acme` (alphanumeric / `.` `_` `-`, max 64). Responses include `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`; over-limit returns `429` with `Retry-After`. Tenant id is recorded on the enqueue audit event.
+`POST /v1/content` and `POST /v1/content/url` are limited per tenant via Redis (`ratelimit:tenant:<id>:<window>`). Pass `X-Tenant-Id: acme` (alphanumeric / `.` `_` `-`, max 64). Responses include `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`; over-limit returns `429` with `Retry-After`. Tenant id is recorded on the enqueue audit event.
+
+### Remote URL ingest
+
+`POST /v1/content/url` accepts `{ "image_url": "https://...", "caption": "..." }`, downloads the bytes, then uses the same hash → object store → queue path as multipart upload. Fetches are http/https only: credentials, redirects, loopback/metadata hosts, and DNS that resolves to private/reserved addresses are rejected.
+
+### Claim locks
+
+Review claims are Redis SETNX locks (15 minute TTL) plus `claim_expires_at` on the queue row. Listing or claiming reviews releases expired rows back to `pending` (audit action `claim_expired`) so a crashed reviewer cannot strand an item. The desk shows remaining lock time on claimed cards.
 
 ---
 
 ## Data model (Postgres)
 
-- `content_items` — object pointer + caption + `content_hash` (unique)  
-- `jobs` — queue state, attempts, DLQ-oriented failure states  
-- `decisions` — full envelope + scores  
-- `review_queue` — claim / resolve workflow  
-- `audit_log` — immutable actions  
+- `content_items` — object pointer + caption + `content_hash` (unique)
+- `jobs` — queue state, attempts, DLQ-oriented failure states
+- `decisions` — full envelope + scores
+- `review_queue` — claim / resolve workflow
+- `audit_log` — immutable actions
 
 Schema: [`db/migrations/001_init.sql`](db/migrations/001_init.sql)
 
@@ -147,19 +159,11 @@ From `make eval` / `eval/reports/latest.json` on the synthetic labeled set (n=57
 | Accuracy | — | 1.00 |
 | Manual review reduction vs send-all | ≥ 0.60 | **0.72** (auto-resolve rate) |
 
-These numbers come only from harness output on a synthetic fixture set for the local heuristic+rules path. Next step for résumé-grade claims: swap in human-labeled real images and re-run under `VISION_PROVIDER=aws|gcp`.
+These numbers come from a synthetic fixture set designed for the local heuristic-and-rules path; they do not demonstrate performance on real-world content. A representative evaluation requires human-labeled images and a fresh run for each configured vision provider.
 
 Ops snapshot (live): `GET /v1/metrics/summary` and Prometheus `GET /metrics`.  
 Grafana **Moderation ops** dashboard is provisioned at http://localhost:3000 (datasource → local Prometheus).  
 Audit trail: `GET /v1/audit`.
-
-### Résumé-ready bullets (architecture + measured)
-
-- Built an event-driven multimodal moderation pipeline (ingest → vision → policy fusion → confidence routing → human review) with idempotent jobs, SQS/Pub/Sub retries + DLQ, and a structured decision envelope.
-- Pluggable adapters for vision (`local` / AWS Rekognition / GCP Vision), storage (S3/MinIO / GCS), and queue (SQS / Pub/Sub) behind env flags — local demo stays Docker Compose.
-- Confidence banding auto-resolved **72%** of cases on a 57-sample labeled harness (macro precision **1.00** on the local path); mid-band items route to a claim-locked review desk with audited overrides.
-
----
 
 ## Repo layout
 
@@ -218,4 +222,4 @@ Pull requests run GitHub Actions (`.github/workflows/ci.yml`): Python lint, unit
 
 ## License
 
-MIT (or your choice).
+MIT. See [LICENSE](LICENSE).
